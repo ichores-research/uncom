@@ -33,3 +33,7 @@ sample = dataset[0]["audio"]
 
 result = pipe(sample, return_timestamps="word")
 print(result)
+
+
+result = pipe("data/8.mp3", return_timestamps="word")
+print(result)
