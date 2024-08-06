@@ -4,3 +4,5 @@ models/
 .DS_Store
 __pycache__/
 *.pyc
+output/
+cute_cats.png
