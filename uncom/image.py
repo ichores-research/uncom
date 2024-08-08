@@ -69,18 +69,40 @@ class PointingDetector:
     def __init__(self) -> None:
         # Setup Mediapipe HandLandmarker
         base_options = BaseOptions(model_asset_path="models/hand_landmarker.task")
-        options = HandLandmarkerOptions(base_options=base_options, num_hands=2)
+        options = HandLandmarkerOptions(
+            base_options=base_options, num_hands=2, min_hand_detection_confidence=0.3
+        )
         self.detector = HandLandmarker.create_from_options(options)
 
     def detect(self, image_path):
         # Detect hand landmarks from the input image
+        # mp_hands = mp.solutions.hands
+
+        # hands = mp_hands.Hands(
+        #     static_image_mode=False, max_num_hands=2, min_detection_confidence=0.5
+        # )
+        # hand_img = cv2.imread(image_path)
+
+        # # Resizing the image for faster processing.
+        # hand_img = cv2.resize(hand_img, None, fx=0.1, fy=0.1)
+
+        # # Convert the BGR image to RGB before processing.
+        # rgb_img = cv2.cvtColor(hand_img, cv2.COLOR_BGR2RGB)
+
+        # # Process.
+        # results = hands.process(rgb_img)
+
+        # print("Resuuuuuuuuuuu", results)
+
         image = mp.Image.create_from_file(image_path)
         landmarks = self.detector.detect(image)
         # Convert landmarks to numpy
         landmarks = hand_landmarks_to_numpy(landmarks.hand_landmarks)
 
         # Find the hand with the lowest z coordinate, use it as the pointing hand
-        pointing_zs = [l[12][2] for l in landmarks]
+        print(f"Detected {len(landmarks)} hands")
+        print([l[8] for l in landmarks])
+        pointing_zs = [l[8][2] for l in landmarks]
         idx = np.argmin(pointing_zs)
         hand = landmarks[idx]
 
@@ -230,7 +252,7 @@ def annotate_image(
             # No color
             color = np.array([255, 255, 255])
         else:
-            color = np.array([255, 165, 0])
+            color = np.array([0, 165, 255])
 
         # Draw bounding box
         cv2.rectangle(
@@ -333,6 +355,7 @@ class Segmenter:
     """
     A class to segment objects in an image.
     """
+
     def __init__(self, device="cuda", torch_dtype="auto") -> None:
         # SegmentAnything model for object segmentation
         model_id = "facebook/sam-vit-base"
@@ -349,12 +372,12 @@ class Segmenter:
     ) -> List[DetectionResult]:
         """
         Segment objects in an image based on detection results.
-        
+
         Args:
         - image (Image.Image): Input image.
         - detection_results (list): List of DetectionResult objects.
         - polygon_refinement (bool): Whether to refine the segmentation masks using polygons.
-        
+
         Returns:
         - list: List of DetectionResult objects with segmentation masks.
         """

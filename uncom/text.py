@@ -5,9 +5,8 @@ from typing import Optional, Union
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
-# Prompt for the command extraction
-PROMPT = 'User will provide you a transcription JSON from Whisper. Extract from it the object (noun + optional adjectives), the action (verb or phrase), and the target (noun + optional adjectives). Return the result as JSON with the keys "object", "action", and "target". If you can\'t find any of these, leave the value empty. Be as concise as possible. Additionally, determine whether object and target are concrete objects like "apple" or not concrete like "here". Add appriopriate "concrete" flag. Example: {"object": {"text": "mug", "concrete": "true", "timestamp": [1.04, 1.36]}, "action": {"text": "put on top", "timestamp": [1.5, 1.76]}, "target": {"text": "laptop", "concrete": "false", "timestamp": [2.24, 2.46]}}. Choose only one interpretation and write just one valid JSON object without additional text or special formatting.'
-
+PROMPT = 'User will provide you a transcription JSON from Whisper. Extract from it the object (noun + optional adjectives), the action (verb or phrase), and the target (noun + optional adjectives). Return the result as JSON with the keys "object", "action", and "target". If you can\'t find any of these, leave the value empty. Be as concise as possible. Example: {"object": {"text": "mug", "timestamp": [1.04, 1.36]}, "action": {"text": "put on top", "timestamp": [1.5, 1.76]}, "target": {"text": "laptop", "timestamp": [2.24, 2.46]}}. Choose only one interpretation and write just one valid JSON object.'
+PROMPT2 = 'Refine your own output to include information whether the object and the target are concrete objects like "apple" or not concrete like "here". Add appriopriate "concrete" flag to your generated JSON.'
 
 @dataclass
 class Word:
@@ -91,6 +90,18 @@ class CommandExtractor:
             {"role": "system", "content": PROMPT},
             {"role": "user", "content": str(transcription)},
         ]
+        output = self.pipe(
+            messages, max_new_tokens=500, return_full_text=False, do_sample=False
+        )[0]["generated_text"]
+
+        print("Generated text:", output)
+
+        # Remove "```json" and "```" if there. Sometimes the model adds it.
+        # output = output.replace("```json", "").replace("```", "").strip()
+
+        messages.append({"role": "assistant", "content": output})
+        messages.append({"role": "system", "content": PROMPT2})
+
         output = self.pipe(
             messages, max_new_tokens=500, return_full_text=False, do_sample=False
         )[0]["generated_text"]

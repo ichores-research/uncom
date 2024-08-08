@@ -43,9 +43,8 @@ class AudioTranscriber:
             max_new_tokens=128,
             chunk_length_s=30,
             batch_size=16,
-            return_timestamps=True,
+            return_timestamps=True
         )
 
     def transcribe(self, audio_path: str) -> Dict:
-        # Transcribe the audio, include word timestamps
-        return self.pipe(audio_path, return_timestamps="word")
+        return self.pipe(audio_path, return_timestamps="word", generate_kwargs={"language": "english"})
