@@ -85,6 +85,8 @@ def understand(video_path, output_dir, device="auto"):
     print(f"Detected {len(object_results)} object instances of '{command.object.text}'")
     print(f"Detected {len(target_results)} target instances of '{command.target.text}'")
 
+    #TODO: Here is the moment to handle concrete vs non-concrete targets
+
     # If there are multiple objects detected, detect the pointing direction and choose the most likely one
     if len(object_results) > 1:
         object_pointing_vec = hand_detector.detect(object_frame_path)
