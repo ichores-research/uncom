@@ -4,7 +4,7 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-from utils import draw_landmarks_on_image
+from model_tests.utils import draw_landmarks_on_image
 
 # STEP 2: Create an HandLandmarker object.
 base_options = python.BaseOptions(model_asset_path="models/hand_landmarker.task")

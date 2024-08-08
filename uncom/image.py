@@ -18,8 +18,10 @@ from transformers import AutoModelForMaskGeneration, AutoProcessor, pipeline
 from uncom.geometry import points_straight_distance, straight_from_points
 
 
-
 def extract_frame(video_path, time):
+    """
+    Extracts a frame from a video at a given time. Uses ffmpeg.
+    """
     dir = Path(video_path).parent
     image_path = dir / f"{time}.png"
     # Extract a frame from a video
@@ -43,52 +45,75 @@ def extract_frame(video_path, time):
 
 
 def show_image(image_path: str):
+    """
+    Helper function to show an image.
+    """
     image = Image.open(image_path)
     image.show()
 
 
 def load_image(image_str: str) -> Image.Image:
+    """
+    Load an image from a file.
+    """
     image = Image.open(image_str).convert("RGB")
 
     return image
 
 
 class PointingDetector:
+    """
+    A class to detect pointing vectors from an image.
+    """
+
     def __init__(self) -> None:
+        # Setup Mediapipe HandLandmarker
         base_options = BaseOptions(model_asset_path="models/hand_landmarker.task")
         options = HandLandmarkerOptions(base_options=base_options, num_hands=2)
         self.detector = HandLandmarker.create_from_options(options)
 
     def detect(self, image_path):
+        # Detect hand landmarks from the input image
         image = mp.Image.create_from_file(image_path)
         landmarks = self.detector.detect(image)
+        # Convert landmarks to numpy
         landmarks = hand_landmarks_to_numpy(landmarks.hand_landmarks)
 
-        # Pick the hand
+        # Find the hand with the lowest z coordinate, use it as the pointing hand
         pointing_zs = [l[12][2] for l in landmarks]
         idx = np.argmin(pointing_zs)
         hand = landmarks[idx]
 
+        # Get the pointing vector
         palm_vec = finger_vector(hand)
 
+        # Convert to pixel coordinates
         palm_vec *= np.array([image.width, image.height])
 
         return palm_vec.astype(int)
 
 
 def finger_vector(hand_landmarks: npt.NDArray) -> npt.NDArray:
+    """
+    Get the pointing vector from the hand landmarks.
+    """
     # From 0 to 9
-    return np.stack([hand_landmarks[5,0:2],hand_landmarks[8,0:2]])
+    return np.stack([hand_landmarks[5, 0:2], hand_landmarks[8, 0:2]])
 
 
 def hand_landmarks_to_numpy(
     hand_landmarks: list[list[NormalizedLandmark]],
 ) -> npt.NDArray:
+    """
+    Convert a list of hand landmarks to a numpy array.
+    """
     hands = []
 
     for hand in hand_landmarks:
         # 21 landmarks
-        landmarks = np.array([[landmark.x, landmark.y, landmark.z] for landmark in hand])
+        landmarks = np.array(
+            [[landmark.x, landmark.y, landmark.z] for landmark in hand]
+        )
         hands.append(landmarks)
 
     return hands
@@ -96,6 +121,10 @@ def hand_landmarks_to_numpy(
 
 @dataclass
 class BoundingBox:
+    """
+    A class to represent a bounding box.
+    """
+
     xmin: int
     ymin: int
     xmax: int
@@ -104,7 +133,7 @@ class BoundingBox:
     @property
     def xyxy(self) -> List[float]:
         return [self.xmin, self.ymin, self.xmax, self.ymax]
-    
+
     @property
     def center(self) -> Tuple[int, int]:
         return (self.xmin + self.xmax) // 2, (self.ymin + self.ymax) // 2
@@ -112,6 +141,10 @@ class BoundingBox:
 
 @dataclass
 class DetectionResult:
+    """
+    A class to represent a detection result. Used for object detection and segmentation.
+    """
+
     score: float
     label: str
     box: BoundingBox
@@ -132,9 +165,14 @@ class DetectionResult:
 
 
 class ObjectDetector:
+    """
+    A class to detect objects in an image based on a description.
+    """
+
     def __init__(
         self, device="cuda", torch_dtype="auto", detection_threshold=0.3
     ) -> None:
+        # Grounding DINO model for zero-shot object detection
         model_id = "IDEA-Research/grounding-dino-tiny"
         self.pipeline = pipeline(
             model=model_id,
@@ -147,20 +185,35 @@ class ObjectDetector:
     def detect(
         self, image: Union[str, Image.Image], description: str
     ) -> List[DetectionResult]:
+        # The model works better with a period at the end of the description
         if not description.endswith("."):
             description += "."
 
         results = self.pipeline(
             image, candidate_labels=[description], threshold=self.detection_threshold
         )
+
+        # Convert results to DetectionResult objects
         results = [DetectionResult.from_dict(result) for result in results]
 
         return results
 
 
 def annotate_image(
-    image: Union[Image.Image, npt.NDArray], detection_results: List[DetectionResult], pointing_vec: npt.NDArray, emph_idx=None
+    image: Union[Image.Image, npt.NDArray],
+    detection_results: List[DetectionResult],
+    pointing_vec: npt.NDArray,
+    emph_idx=None,
 ) -> npt.NDArray:
+    """
+    Annotate an image with bounding boxes and masks.
+
+    Args:
+    - image (Image.Image or np.ndarray): Input image.
+    - detection_results (list): List of DetectionResult objects.
+    - pointing_vec (np.ndarray): Pointing vector.
+    - emph_idx (int): Index of the detection result to emphasize (i.e. selected object).
+    """
     # Convert PIL Image to OpenCV format
     image_cv2 = np.array(image) if isinstance(image, Image.Image) else image
     image_cv2 = cv2.cvtColor(image_cv2, cv2.COLOR_RGB2BGR)
@@ -175,7 +228,7 @@ def annotate_image(
         # Sample a random color for each detection
         if emph_idx is not None and i != emph_idx:
             # No color
-            color = np.array([255,255,255])
+            color = np.array([255, 255, 255])
         else:
             color = np.array([255, 165, 0])
 
@@ -203,7 +256,13 @@ def annotate_image(
             cv2.drawContours(image_cv2, contours, -1, color.tolist(), 2)
 
     # Draw pointing vector
-    cv2.arrowedLine(image_cv2, (pointing_vec[0,0], pointing_vec[0,1]), (pointing_vec[1,0], pointing_vec[1,1]), (0, 255, 0), 2)
+    cv2.arrowedLine(
+        image_cv2,
+        (pointing_vec[0, 0], pointing_vec[0, 1]),
+        (pointing_vec[1, 0], pointing_vec[1, 1]),
+        (0, 255, 0),
+        2,
+    )
 
     image_rgb = cv2.cvtColor(image_cv2, cv2.COLOR_BGR2RGB)
 
@@ -271,7 +330,11 @@ def refine_masks(
 
 
 class Segmenter:
+    """
+    A class to segment objects in an image.
+    """
     def __init__(self, device="cuda", torch_dtype="auto") -> None:
+        # SegmentAnything model for object segmentation
         model_id = "facebook/sam-vit-base"
         self.model = AutoModelForMaskGeneration.from_pretrained(
             model_id, device_map=device, torch_dtype=torch_dtype
@@ -284,6 +347,17 @@ class Segmenter:
         detection_results: List[DetectionResult],
         polygon_refinement: bool = True,
     ) -> List[DetectionResult]:
+        """
+        Segment objects in an image based on detection results.
+        
+        Args:
+        - image (Image.Image): Input image.
+        - detection_results (list): List of DetectionResult objects.
+        - polygon_refinement (bool): Whether to refine the segmentation masks using polygons.
+        
+        Returns:
+        - list: List of DetectionResult objects with segmentation masks.
+        """
         boxes = [[r.box.xyxy for r in detection_results]]
         inputs = self.processor(
             images=image, input_boxes=boxes, return_tensors="pt"
@@ -299,22 +373,32 @@ class Segmenter:
 
         masks = refine_masks(masks, polygon_refinement)
 
+        # Assign masks to detection results
         for detection_result, mask in zip(detection_results, masks):
             detection_result.mask = mask
 
         return detection_results
 
 
-def pointed_result_index(detection_results: List[DetectionResult], pointing_vec: npt.NDArray) -> int:
+def pointed_result_index(
+    detection_results: List[DetectionResult], pointing_vec: npt.NDArray
+) -> int:
+    """
+    Find the index of the detection result that is pointed at by the pointing vector.
+    """
+
+    # Solved by rotating the reference frame so that the pointing vector is along the x-axis
     straight = straight_from_points(pointing_vec[0], pointing_vec[1])
     points = np.array([r.box.center for r in detection_results])
     distances = points_straight_distance(points, straight)
     idx = np.argmin(distances)
 
     return idx
-    
 
-def annotate_action(object_image: Image.Image, target_image: Image.Image, caption: str) -> Image.Image:
+
+def annotate_action(
+    object_image: Image.Image, target_image: Image.Image, caption: str
+) -> Image.Image:
     # Put images side by side and add caption near the top
     image1 = object_image
     image2 = target_image
@@ -328,7 +412,7 @@ def annotate_action(object_image: Image.Image, target_image: Image.Image, captio
     max_height = max(height1, height2)
 
     # Create a new image with a white background
-    combined_image = Image.new('RGB', (total_width, max_height), (255, 255, 255))
+    combined_image = Image.new("RGB", (total_width, max_height), (255, 255, 255))
 
     # Paste the images into the combined image
     combined_image.paste(image1, (0, 0))

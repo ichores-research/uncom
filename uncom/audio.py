@@ -4,6 +4,9 @@ from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor, pipeline
 
 
 def separate_audio(video_path):
+    """
+    Extract audio from a video file. Uses ffmpeg.
+    """
     audio_path = video_path.replace(".mp4", ".mp3")
     # Extract audio from video using ffmpeg
     command = [
@@ -21,7 +24,11 @@ def separate_audio(video_path):
 
 
 class AudioTranscriber:
+    """
+    Speech-to-text with timestamps.
+    """
     def __init__(self, device="cuda", torch_dtype="auto") -> None:
+        # Whisper model
         model_id = "openai/whisper-large-v3"
         model = AutoModelForSpeechSeq2Seq.from_pretrained(
             model_id, use_safetensors=True, device_map=device, torch_dtype=torch_dtype
@@ -40,4 +47,5 @@ class AudioTranscriber:
         )
 
     def transcribe(self, audio_path: str) -> Dict:
+        # Transcribe the audio, include word timestamps
         return self.pipe(audio_path, return_timestamps="word")

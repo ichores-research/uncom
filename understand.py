@@ -24,6 +24,7 @@ def understand(video_path, output_dir, device="auto"):
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    # Torch on CPU does not support half precision
     torch_dtype = torch.float32 if device == "cpu" else "auto"
 
     print("Device:", device)
@@ -35,9 +36,9 @@ def understand(video_path, output_dir, device="auto"):
     segmenter = Segmenter(device=device, torch_dtype=torch_dtype)
     hand_detector = PointingDetector()
 
-    # Create a temporary directory
     is_tmp = output_dir is None
 
+    # Create a temporary directory if not specified otherwise clean the given directory
     if is_tmp:
         output_dir = tempfile.mkdtemp()
         output_dir = Path(output_dir)
@@ -53,10 +54,7 @@ def understand(video_path, output_dir, device="auto"):
     tmp_video_path = shutil.copy(video_path, output_dir)
     # Extract audio from the video
     tmp_audio_path = separate_audio(tmp_video_path)
-
-    print("Files in temporary directory:")
-    for name in os.listdir(output_dir):
-        print(name)
+    print("Separated audio to", tmp_audio_path)
 
     # Transcribe the audio
     transcription = transcriber.transcribe(tmp_audio_path)
@@ -69,14 +67,14 @@ def understand(video_path, output_dir, device="auto"):
     command.save(command_path)
     print(f"Saved command to {command_path}")
 
-    # Extract frames from the video
+    # Extract relevant frames from the video
     object_frame_path = extract_frame(tmp_video_path, command.object.timestamp[1])
     target_frame_path = extract_frame(tmp_video_path, command.target.timestamp[1])
 
     print(f"Extracted {command.object.timestamp[1]}s frame from {object_frame_path}")
     print(f"Extracted {command.target.timestamp[1]}s frame from {target_frame_path}")
 
-    # Load images
+    # Load images of the extracted frames
     object_image = load_image(object_frame_path)
     target_image = load_image(target_frame_path)
 
@@ -87,6 +85,7 @@ def understand(video_path, output_dir, device="auto"):
     print(f"Detected {len(object_results)} object instances of '{command.object.text}'")
     print(f"Detected {len(target_results)} target instances of '{command.target.text}'")
 
+    # If there are multiple objects detected, detect the pointing direction and choose the most likely one
     if len(object_results) > 1:
         object_pointing_vec = hand_detector.detect(object_frame_path)
         print(f"Detected object pointing {object_pointing_vec}")
@@ -101,31 +100,44 @@ def understand(video_path, output_dir, device="auto"):
     else:
         pointed_target_idx = target_results[0]
 
-    # Detect objects in the corresponding frames
+    # Segment only the relevant (pointed at) objects in the corresponding frames
     # Yes... quite a strange destruction expression
-    [object_results[pointed_object_idx]] = segmenter.segment(object_image, [object_results[pointed_object_idx]])
-    [target_results[pointed_target_idx]] = segmenter.segment(target_image, [target_results[pointed_target_idx]])
+    [object_results[pointed_object_idx]] = segmenter.segment(
+        object_image, [object_results[pointed_object_idx]]
+    )
+    [target_results[pointed_target_idx]] = segmenter.segment(
+        target_image, [target_results[pointed_target_idx]]
+    )
 
     print(f"Segmented object '{command.object.text}'")
     print(f"Segmented target '{command.target.text}'")
 
-    annotated_object_image = annotate_image(object_image, object_results, object_pointing_vec, emph_idx=pointed_object_idx)
+    # Annotate object image
+    annotated_object_image = annotate_image(
+        object_image, object_results, object_pointing_vec, emph_idx=pointed_object_idx
+    )
     annotated_object_image_path = output_dir / "annotated_object.png"
     annotated_object_image.save(annotated_object_image_path)
     print(f"Saved annotated object image to {annotated_object_image_path}")
 
-    annotated_target_image = annotate_image(target_image, target_results, target_pointing_vec, emph_idx=pointed_target_idx)
+    # Annotate target image
+    annotated_target_image = annotate_image(
+        target_image, target_results, target_pointing_vec, emph_idx=pointed_target_idx
+    )
     annotated_target_image_path = output_dir / "annotated_target.png"
     annotated_target_image.save(annotated_target_image_path)
     print(f"Saved annotated target image to {annotated_target_image_path}")
 
+    # Produce a complete annotated action image
     caption = f"{command.object.text} - {command.action.text} - {command.target.text}"
-    annotated_action = annotate_action(annotated_object_image, annotated_target_image, caption)
+    annotated_action = annotate_action(
+        annotated_object_image, annotated_target_image, caption
+    )
     annotated_action_path = output_dir / "annotated_action.png"
     annotated_action.save(annotated_action_path)
     print(f"Saved annotated action image to {annotated_action_path}")
 
-    # Clean up the temp dir
+    # Clean up the temp dir if was used
     if is_tmp:
         shutil.rmtree(output_dir)
 

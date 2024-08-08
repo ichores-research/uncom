@@ -5,11 +5,20 @@ from typing import Optional, Union
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
+# Prompt for the command extraction
 PROMPT = 'User will provide you a transcription JSON from Whisper. Extract from it the object (noun + optional adjectives), the action (verb or phrase), and the target (noun + optional adjectives). Return the result as JSON with the keys "object", "action", and "target". If you can\'t find any of these, leave the value empty. Be as concise as possible. Additionally, determine whether object and target are concrete objects like "apple" or not concrete like "here". Add appriopriate "concrete" flag. Example: {"object": {"text": "mug", "concrete": "true", "timestamp": [1.04, 1.36]}, "action": {"text": "put on top", "timestamp": [1.5, 1.76]}, "target": {"text": "laptop", "concrete": "false", "timestamp": [2.24, 2.46]}}. Choose only one interpretation and write just one valid JSON object without additional text or special formatting.'
 
 
 @dataclass
 class Word:
+    """
+    A word extracted from the transcription.
+    
+    Attributes:
+        text: The text of the word.
+        timestamp: The start and end timestamps of the word in seconds.
+        concrete: Whether the word is a concrete object.
+    """
     text: str
     timestamp: tuple[float, float]
     concrete: Optional[bool] = None
@@ -17,6 +26,9 @@ class Word:
 
 @dataclass
 class Command:
+    """
+    A command extracted from the transcription.
+    """
     object: Word
     target: Word
     action: Word
@@ -54,7 +66,11 @@ class Command:
 
 
 class CommandExtractor:
+    """
+    Extracts a command from a transcription.
+    """
     def __init__(self, device="cuda", torch_dtype="auto") -> None:
+        # Phi-mini model
         model = AutoModelForCausalLM.from_pretrained(
             "microsoft/Phi-3-mini-4k-instruct",
             trust_remote_code=True,
@@ -81,9 +97,10 @@ class CommandExtractor:
 
         print("Generated text:", output)
 
-         # Remove "```json" and "```" if there
+        # Remove "```json" and "```" if there. Sometimes the model adds it.
         output = output.replace("```json", "").replace("```", "").strip()
 
+        # Parse the output
         command = Command.from_text(output)
 
         return command
