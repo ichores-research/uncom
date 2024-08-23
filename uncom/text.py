@@ -2,8 +2,25 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
-
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+import nltk 
+from nltk.corpus import stopwords
+nltk.download('stopwords')
+
+def n_gram_generator(text, n=1, remove_stopwords=False):
+    text=text.split()
+    n_grams = []
+    if remove_stopwords:
+        text = [w for w in text if w not in set(stopwords.words('english'))]
+    n_gram_length = len(text)-n+1
+    if n_gram_length > 0 and n>0:
+        for word_index in range(n_gram_length):
+            n_grams.append(text[word_index:word_index+n])
+    else:
+        print("ERROR: Something went wrong, check if 0<n<=len(text). Returning whole phrase.") 
+        n_grams = [text]
+    return [" ".join(gram) for gram in n_grams]
+    
 
 PROMPT = 'User will provide you a transcription JSON from Whisper. Extract from it the object (noun + optional adjectives), the action (verb or phrase), and the target (noun + optional adjectives). Return the result as JSON with the keys "object", "action", and "target". If you can\'t find any of these, leave the value empty. Be as concise as possible. Example: {"object": {"text": "mug", "timestamp": [1.04, 1.36]}, "action": {"text": "put on top", "timestamp": [1.5, 1.76]}, "target": {"text": "laptop", "timestamp": [2.24, 2.46]}}. Choose only one interpretation and write just one valid JSON object.'
 PROMPT2 = 'Refine your own output to include information whether the object and the target are concrete objects like "apple" or not concrete like "here". Add appriopriate "concrete" flag to your generated JSON.'
@@ -19,7 +36,7 @@ class Word:
         concrete: Whether the word is a concrete object.
     """
     text: str
-    timestamp: tuple[float, float]
+    timestamp: tuple([float, float])
     concrete: Optional[bool] = None
 
 
@@ -86,6 +103,7 @@ class CommandExtractor:
         )
 
     def extract(self, transcription):
+        print("bigram of transcription: ", n_gram_generator(transcription[text], n=2, remove_stopwords=True))
         messages = [
             {"role": "system", "content": PROMPT},
             {"role": "user", "content": str(transcription)},
