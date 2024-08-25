@@ -71,7 +71,7 @@ class PointingDetector:
         base_options = BaseOptions(model_asset_path="models/hand_landmarker.task")
         options = HandLandmarkerOptions(
             base_options=base_options, num_hands=2, min_hand_detection_confidence=0.3
-        )
+        )   
         self.detector = HandLandmarker.create_from_options(options)
 
     def detect(self, image_path):
@@ -102,18 +102,21 @@ class PointingDetector:
         # Find the hand with the lowest z coordinate, use it as the pointing hand
         print(f"Detected {len(landmarks)} hands")
         print([l[8] for l in landmarks])
+        
         pointing_zs = [l[8][2] for l in landmarks]
-        idx = np.argmin(pointing_zs)
-        hand = landmarks[idx]
+        if len(pointing_zs)>0:
+            idx = np.argmin(pointing_zs)
+            hand = landmarks[idx]
 
-        # Get the pointing vector
-        palm_vec = finger_vector(hand)
+            # Get the pointing vector
+            palm_vec = finger_vector(hand)
 
-        # Convert to pixel coordinates
-        palm_vec *= np.array([image.width, image.height])
+            # Convert to pixel coordinates
+            palm_vec *= np.array([image.width, image.height])
 
-        return palm_vec.astype(int)
-
+            return palm_vec.astype(int)
+        else:
+            return []
 
 def finger_vector(hand_landmarks: npt.NDArray) -> npt.NDArray:
     """
