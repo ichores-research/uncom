@@ -74,6 +74,7 @@ def understand(video_path, output_dir, device="auto"):
     # Extract the command
 
     command = command_extractor.extract(transcription)
+
     print("Command:", command)
     command_path = output_dir / "command.json"
     command.save(command_path)
@@ -82,7 +83,6 @@ def understand(video_path, output_dir, device="auto"):
     # unload command_extractor model 
     del command_extractor
     torch.cuda.empty_cache()
-
 
     # Extract relevant frames from the video
     object_frame_path = extract_frame(tmp_video_path, command.object.timestamp[1])
@@ -95,7 +95,12 @@ def understand(video_path, output_dir, device="auto"):
     object_image = load_image(object_frame_path)
     target_image = load_image(target_frame_path)
 
+    object_concrete = command.object.concrete
+    target_concrete = command.target.concrete
+
+
     # Load oject detector model 
+    
     object_detector = ObjectDetector(device=device, torch_dtype=torch_dtype)
     # Detect objects in the corresponding frames
     
@@ -103,34 +108,78 @@ def understand(video_path, output_dir, device="auto"):
     target_results = object_detector.detect(target_image, command.target.text)
 
     print(f"Detected {len(object_results)} object instances of '{command.object.text}'")
-    print(f"Detected {len(target_results)} target instances of '{command.target.text}'")
-
+    if len(target_results)>0:
+        print(f"Detected {len(target_results)} target instances of '{command.target.text}'")
+    else:
+        print(f"\n\n\n'{command.target.text}' could not be detected.\n\n\n")
     #TODO: Here is the moment to handle concrete vs non-concrete targets
 
-    # unload object detector model 
-    del object_detector
-    torch.cuda.empty_cache()
 
     # load hand detector model 
     hand_detector = PointingDetector()
 
-    # If there are multiple objects detected, detect the pointing direction and choose the most likely one
-    if len(object_results) > 1:
-        object_pointing_vec = hand_detector.detect(object_frame_path)
-        print(f"Detected object pointing {object_pointing_vec}")
-        pointed_object_idx = pointed_result_index(object_results, object_pointing_vec)
-    else:
-        pointed_object_idx = object_results[0]
-
+    # It is necessary to check if it is impossible to understand what the object and/or what the target is, 
+    # that is, object/target is not concrete and  no pointing vector could be detected. Robot should ask for
+    # new set of instructions
+    object_pointing_detected = len(hand_detector.detect(object_frame_path))>0
+    target_pointing_detected = len(hand_detector.detect(target_frame_path))>0
     
-    if len(target_results) > 1:
-        target_pointing_vec = hand_detector.detect(target_frame_path)
-        print(f"Detected target pointing {target_pointing_vec}")
-        pointed_target_idx = pointed_result_index(target_results, target_pointing_vec)
+    impossible_task = (not (object_concrete or object_pointing_detected) or  # checks if the object is not concrrte and if no hands were detected
+                       not (target_concrete or target_pointing_detected) or  # checks if the target is not concrrte and if no hands were detected
+                       (object_concrete and len(object_results)==0) or  # checks if the object is concrete but could not be identified
+                       (target_concrete and len(target_results)==0))  # checks if the targect is concrete but could not be identified
+    
+    if impossible_task:
+        print("I am deeply sorry, but I failed to understandyour instructions, could you please explain it again?") 
+        exit() 
+    
+    if object_concrete:
+    # If there are multiple objects detected, detect the pointing direction and choose the most likely one
+        if len(object_results) > 1:
+            object_pointing_vec = hand_detector.detect(object_frame_path)
+            print(f"Detected object pointing {object_pointing_vec}")
+            pointed_object_idx = pointed_result_index(object_results, object_pointing_vec)
+        else:
+            pointed_object_idx = object_results[0]
     else:
-        pointed_target_idx = target_results[0]
+        try:
+            object_pointing_vec = hand_detector.detect(object_frame_path)
+            object_results = object_detector.detect(object_image, "pickable objects") # TODO: we can further speed it up by croping the image to the pointed region
+            print("Pickable objects: ", object_results)
+            pointed_object_idx = pointed_result_index(object_results, object_pointing_vec)
+            print("Inferred object to be picked: ", object_results[pointed_object_idx])
 
+        except Exception as e:
+            print("Failed to understand which object should be picked due to:",  e)
+            exit()
+
+    target_pointing_vec = hand_detector.detect(target_frame_path)
+    print("Target location pointing vector: ", target_pointing_vec)
+    
+    target_concrete=False
+    if target_concrete:
+        if len(target_results) > 1:
+            target_pointing_vec = hand_detector.detect(target_frame_path)
+            print(f"Detected target pointing {target_pointing_vec}")
+            pointed_target_idx = pointed_result_index(target_results, target_pointing_vec)
+        else:
+            pointed_target_idx = target_results[0]
+
+    else:
+        try:
+            target_results = object_detector.detect(object_image, "container") # TODO: we can further speed it up by croping the image to the pointed region
+            print("Container objects: ", object_results)
+            pointed_target_idx = pointed_result_index(target_results, target_pointing_vec)
+            print("Inferred target object: ", target_results[pointed_target_idx])
+
+        except Exception as e:
+            print("Failed to understand which object should be picked due to:",  e)
+            exit()
+
+    # unload object detector model 
     # unload hand_detector
+
+    del object_detector
     del hand_detector
     torch.cuda.empty_cache()
     
