@@ -6,22 +6,25 @@ import shutil
 import tempfile
 from pathlib import Path
 import torch
-
-
-
 from uncom.audio import AudioTranscriber, separate_audio
 from uncom.image import (
     PointingDetector,
     ObjectDetector,
     Segmenter,
+    DetectionResult,
+    BoundingBox,
     annotate_action,
     annotate_image,
     extract_frame,
     load_image,
     pointed_result_index,
+    voronoi_segmenting
 )
-from uncom.text import CommandExtractor
-
+from uncom.text import CommandExtractor, check_relative_position
+from shapely.geometry import Polygon
+import matplotlib.pyplot as plt
+from scipy.spatial import voronoi_plot_2d
+import numpy as np 
 
 def understand(video_path, output_dir, device="auto"):
     if device == "auto":
@@ -65,7 +68,20 @@ def understand(video_path, output_dir, device="auto"):
 
     # Transcribe the audio
     transcription = transcriber.transcribe(tmp_audio_path)
-    print("Transcription:", transcription)
+    transcription = {'text': ' Take this small orange fruit and put it right of the bowl.', 
+                     'chunks': [{'text': ' Take', 'timestamp': (1.74, 3.2)},
+                                {'text': ' this', 'timestamp': (3.2, 3.5)},
+                                {'text': ' small', 'timestamp': (3.5, 3.88)},
+                                {'text': ' orange', 'timestamp': (3.88, 4.52)},
+                                {'text': ' fruit', 'timestamp': (4.52, 4.94)},
+                                {'text': ' and', 'timestamp': (4.94, 5.4)},
+                                {'text': ' put', 'timestamp': (5.4, 5.84)},
+                                {'text': ' it', 'timestamp': (5.84, 6.06)},
+                                {'text': ' right', 'timestamp': (6.06, 6.5)},
+                                {'text': ' of the', 'timestamp': (6.5, 6.8)},
+                                {'text': ' bowl.', 'timestamp': (6.8, 7.18)}
+                                ]
+                    }
     del transcriber
     torch.cuda.empty_cache()
 
@@ -99,13 +115,20 @@ def understand(video_path, output_dir, device="auto"):
     target_concrete = command.target.concrete
 
 
-    # Load oject detector model 
-    
+    # Load oject detector model
     object_detector = ObjectDetector(device=device, torch_dtype=torch_dtype)
     # Detect objects in the corresponding frames
     
     object_results = object_detector.detect(object_image, command.object.text)
-    target_results = object_detector.detect(target_image, command.target.text)
+    target_results = []
+    relative_position = check_relative_position(command.action.text+command.target.text)
+
+    if relative_position:
+        reference_object, position = command.target.text, relative_position
+        target_results = object_detector.detect(target_image, reference_object)
+
+    else:
+        target_results = object_detector.detect(target_image, command.target.text)
 
     print(f"Detected {len(object_results)} object instances of '{command.object.text}'")
     if len(target_results)>0:
@@ -123,7 +146,7 @@ def understand(video_path, output_dir, device="auto"):
     # new set of instructions
     object_pointing_detected = len(hand_detector.detect(object_frame_path))>0
     target_pointing_detected = len(hand_detector.detect(target_frame_path))>0
-    
+
     impossible_task = (not (object_concrete or object_pointing_detected) or  # checks if the object is not concrrte and if no hands were detected
                        not (target_concrete or target_pointing_detected) or  # checks if the target is not concrrte and if no hands were detected
                        (object_concrete and len(object_results)==0) or  # checks if the object is concrete but could not be identified
@@ -141,7 +164,7 @@ def understand(video_path, output_dir, device="auto"):
             pointed_object_idx = pointed_result_index(object_results, object_pointing_vec)
         else:
             pointed_object_idx = object_results[0]
-    else:
+    else:  # non-concrete object cases
         try:
             object_pointing_vec = hand_detector.detect(object_frame_path)
             object_results = object_detector.detect(object_image, "pickable objects") # TODO: we can further speed it up by croping the image to the pointed region
@@ -156,25 +179,108 @@ def understand(video_path, output_dir, device="auto"):
     target_pointing_vec = hand_detector.detect(target_frame_path)
     print("Target location pointing vector: ", target_pointing_vec)
     
-    target_concrete=False
-    if target_concrete:
+    # Target handling cases. There are 4 cases:
+        # 1) target is a concrete object;
+        # 2) target is described relatively to another object;
+        # 3) target is an object described as "this" or "there";
+        # 4) target is an empty space.
+    
+    # target_concrete = True
+    # relative_position = True     
+    area_target = False
+    chosen_area = []
+    if target_concrete:   
+
+        pointed_target_idx = 0 
         if len(target_results) > 1:
             target_pointing_vec = hand_detector.detect(target_frame_path)
             print(f"Detected target pointing {target_pointing_vec}")
             pointed_target_idx = pointed_result_index(target_results, target_pointing_vec)
-        else:
-            pointed_target_idx = target_results[0]
+        elif len(target_results) == 1:
+            pointed_target_idx = 0
+        else: 
+            print("Failed to detect target object due to: ",  e)
+            exit()
 
-    else:
-        try:
-            target_results = object_detector.detect(object_image, "container") # TODO: we can further speed it up by croping the image to the pointed region
-            print("Container objects: ", object_results)
+        if relative_position: # Case 2), relative to an object
+
+            table_bb = object_detector.detect(target_image, "table")[0].box
+            table_cells = voronoi_segmenting(table_bb.xmax, table_bb.ymax, 400, table_bb.xmin, table_bb.ymin)
+            table_cells_regions = [[table_cells.vertices[p] for p in r] for r in table_cells.regions]
+            table_cells_regions = [r for r in table_cells_regions if len(r)>0]
+            table_cell_centers =  [np.array(r).mean(axis=0).tolist() for r in table_cells_regions]
+            reference_center = [(target_results[pointed_target_idx].box.xmax+target_results[pointed_target_idx].box.xmin)/2,
+                             (target_results[pointed_target_idx].box.ymax+target_results[pointed_target_idx].box.ymin)/2]
+            print(target_results[pointed_target_idx].box, reference_center)
+            
+            other_objects = object_detector.detect(object_image, "objects")
+            # other_objects_contours = [ cv2.findContours((o.mask * 255).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE) for o in other_objects if o.mask is not None]
+
+            other_objects_bb = []
+            for o in other_objects:
+                other_objects_bb.append([[o.box.xmin, o.box.ymin],
+                                         [o.box.xmax, o.box.ymax],
+                                         [o.box.xmin, o.box.ymax],
+                                         [o.box.xmax, o.box.ymin]])
+
+            occupancy_grid = [0]*len(table_cells_regions)
+            
+            for i, tc in enumerate(table_cells_regions):
+                for object in other_objects_bb:
+                    if Polygon(object).intersects(Polygon(tc)):
+                        occupancy_grid[i]=1
+            
+            grid = list(zip(occupancy_grid, table_cell_centers, table_cells_regions))
+            grid = [g for g in grid if not g[0]]
+            obj_height = (target_results[pointed_target_idx].box.ymax-target_results[pointed_target_idx].box.ymin)/2
+            obj_width = (target_results[pointed_target_idx].box.xmax-target_results[pointed_target_idx].box.xmin)/2
+            if position in ["left"]:
+                grid = [g for g in grid if g[1][0]<reference_center[0]-obj_width]
+
+            elif position in ["right"]:
+                grid = [g for g in grid if g[1][0]>reference_center[0]+obj_width]
+            
+            elif position in ["in front", "in front of", "up", "above", "over", "higher"]:
+                grid = [g for g in grid if  g[1][1]>reference_center[1]+obj_height]
+            
+            elif position in ["behind", "down", "under", "above", "lower"]:
+                grid = [g for g in grid if g[1][1]<reference_center[0]-obj_height]
+            
+            else: 
+                grid = [g for g in grid if  g[1][0]>reference_center[0]] # TODO: decide what to do when the relative position could not be understood
+            #print("Reference `object and relative position: ", reference_object, relative_position)
+            if len(grid)>0:
+                area_target = True
+                _, center , region = zip(*grid)
+                distances = [np.sqrt( (c[0]-reference_center[0])**2+(c[1]-reference_center[1])**2 ) for c in center]
+                decision = list(zip(distances, region))
+                decision.sort(key=lambda x:x[0])
+                print(decision[0][0], decision[0][1])
+                # img = plt.imread(target_frame_path)
+                # fig, ax = plt.subplots()
+                # ax.imshow(img, extent=[0, 1920, 0, 1080],origin="lower")    
+                # voronoi_plot_2d(table_cells, ax=ax)
+                chosen_area = decision[0][1]
+                # x, y = zip(*decision[0][1])
+                # ax.scatter([reference_center[0]], [reference_center[1]])
+                # ax.fill(list(x),list(y),"r",alpha=0.3)
+                # ax.set_xlim((0, 1920))
+                # ax.set_ylim((0, 1080))
+                # ax.axis('off')
+                # plt.show()
+            else:
+                print("No free area could be detected, please, try again.")
+                exit()
+        else:
+            pass
+
+    else:   
+        target_results = object_detector.detect(object_image, "container") # TODO: we can further speed it up by croping the image to the pointed region
+        print("Container objects: ", object_results)
+        if len(target_results)>=1:  # case 1) or 3), we need to check if the user is pointing at an object.
             pointed_target_idx = pointed_result_index(target_results, target_pointing_vec)
             print("Inferred target object: ", target_results[pointed_target_idx])
-
-        except Exception as e:
-            print("Failed to understand which object should be picked due to:",  e)
-            exit()
+        else: pass# case 3) is assumed when all else fails
 
     # unload object detector model 
     # unload hand_detector
@@ -192,10 +298,14 @@ def understand(video_path, output_dir, device="auto"):
         object_image, [object_results[pointed_object_idx]]
     )
 
-
-    [target_results[pointed_target_idx]] = segmenter.segment(
-        target_image, [target_results[pointed_target_idx]]
-    )
+    if not area_target:
+        [target_results[pointed_target_idx]] = segmenter.segment(
+            target_image, [target_results[pointed_target_idx]]
+        )
+    else:
+        x, y = zip(*chosen_area)
+        target_results = [DetectionResult(score=1.0, label='target.', box=BoundingBox(xmin=int(min(x)), ymin=int(min(y)), xmax=int(max(x)), ymax=int(max(y))), mask=np.array(chosen_area).astype(np.uint8))]
+        pointed_target_idx = 0
 
     print(f"Segmented object '{command.object.text}'")
     print(f"Segmented target '{command.target.text}'")
