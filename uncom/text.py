@@ -7,7 +7,8 @@ import nltk
 from nltk.corpus import stopwords
 nltk.download('stopwords')
 
-PROMPT = 'User will provide you a transcription JSON from Whisper. Extract from it the object (noun + optional adjectives), the action (verb or phrase), and the target (noun + optional adjectives). If the action is a phrasal verb, put it whole. Return the result as JSON with the keys "object", "action", and "target". If you can\'t find any of these, leave the value empty. Be as concise as possible. Example: {"object": {"text": "mug", "timestamp": [1.04, 1.36]}, "action": {"text": "put on top", "timestamp": [1.5, 1.76]}, "target": {"text": "laptop", "timestamp": [2.24, 2.46]}}. Choose only one interpretation and write just one valid JSON object.'
+# PROMPT = 'User will provide you a transcription JSON from Whisper. Extract from it the object (noun + optional adjectives), the action (verb or phrase), and the target (noun + optional adjectives). If the action is a phrasal verb, put it whole. Return the result as JSON with the keys "object", "action", and "target". If you can\'t find any of these, leave the value empty. Be as concise as possible. Example: {"object": {"text": "mug", "timestamp": [1.04, 1.36]}, "action": {"text": "put on top", "timestamp": [1.5, 1.76]}, "target": {"text": "laptop", "timestamp": [2.24, 2.46]}}. Choose only one interpretation and write just one valid JSON object.'
+PROMPT = 'User will provide you a transcription JSON from Whisper. Extract from it the object (noun + optional adjectives), the action (verb or phrase), and the target (noun + optional description). If the target has a description of "next to", "between", "near", etc; it should be included in the target description. If the action is a phrasal verb, put it whole. Return the result as JSON with the keys "object", "action", and "target". If you can\'t find any of these, leave the value empty. Be as concise as possible. Example: {"object": {"text": "mug", "timestamp": [1.04, 1.36]}, "action": {"text": "put on top", "timestamp": [1.5, 1.76]}, "target": {"text": "laptop", "timestamp": [2.24, 2.46]}}. Choose only one interpretation and write just one valid JSON object.'
 PROMPT2 = 'Refine your own output to include information whether the object and the target are concrete objects like "apple" or not concrete like "here". Add appropriate "concrete" flag to your generated JSON.'
 # PROMPT3 = 'Refine your second output if action or target imples that the target is to the left, to the right, in front or behind an object, change the "text" flag of "target" to \'<object>|<relative position>\', where relative position can only be  left, right, above or under. Example \'put to the right of the orange\' becomes \'orange|right\'. Do not create new flags.'
 
@@ -122,7 +123,7 @@ class CommandExtractor:
         return command
 
 def check_relative_position(text):
-    for position in ["left", "right", "beside", "between", "front", "behind"]:
+    for position in ["left", "right", "next", "beside", "between", "front", "behind", "near", "close" ]:
         if position in text:
             return position 
     return False
