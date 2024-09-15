@@ -88,7 +88,7 @@ def understand(video_path, output_dir, device="auto"):
     #                 }
     del transcriber
     torch.cuda.empty_cache()
-
+    print("Transcription: ", transcription)
     # Load command extractor model     
     command_extractor = CommandExtractor(device=device, torch_dtype=torch_dtype)
     # Extract the command
@@ -115,9 +115,10 @@ def understand(video_path, output_dir, device="auto"):
     object_image = load_image(object_frame_path)
     target_image = load_image(target_frame_path)
 
+    image_width, image_height = object_image.size
+
     object_concrete = command.object.concrete
     target_concrete = command.target.concrete
-
 
     # Load oject detector model
     object_detector = ObjectDetector(device=device, torch_dtype=torch_dtype)
@@ -151,8 +152,8 @@ def understand(video_path, output_dir, device="auto"):
     object_pointing_detected = len(hand_detector.detect(object_frame_path))>0
     target_pointing_detected = len(hand_detector.detect(target_frame_path))>0
 
-    impossible_task = (not (object_concrete or object_pointing_detected) or  # checks if the object is not concrrte and if no hands were detected
-                       not (target_concrete or target_pointing_detected) or  # checks if the target is not concrrte and if no hands were detected
+    impossible_task = (not (object_concrete or object_pointing_detected) or  # checks if the object is not concrete and if no hands were detected
+                       not (target_concrete or target_pointing_detected) or  # checks if the target is not concrete and if no hands were detected
                        (object_concrete and len(object_results)==0) or  # checks if the object is concrete but could not be identified
                        (target_concrete and len(target_results)==0))  # checks if the targect is concrete but could not be identified
     
@@ -160,6 +161,8 @@ def understand(video_path, output_dir, device="auto"):
         print("I am deeply sorry, but I failed to understandyour instructions, could you please explain it again?") 
         exit() 
     
+    pointed_object_idx = None
+    object_pointing_vec = None
     if object_concrete:
     # If there are multiple objects detected, detect the pointing direction and choose the most likely one
         if len(object_results) > 1:
@@ -167,7 +170,12 @@ def understand(video_path, output_dir, device="auto"):
             print(f"Detected object pointing {object_pointing_vec}")
             pointed_object_idx = pointed_result_index(object_results, object_pointing_vec)
         else:
-            pointed_object_idx = object_results[0]
+            try:
+                object_pointing_vec = hand_detector.detect(object_frame_path)
+            except Exception as e:
+                print(e)
+                object_pointing_vec = np.array([float(inf),float(inf),float(inf),])
+            pointed_object_idx = 0
     else:  # non-concrete object cases
         try:
             object_pointing_vec = hand_detector.detect(object_frame_path)
@@ -191,6 +199,9 @@ def understand(video_path, output_dir, device="auto"):
     #target_concrete = False
     # relative_position = True     
     area_target = False
+    if "here" in command.target.text or "there" in command.target.text:
+        area_target = True
+
     chosen_area = []
     if target_concrete:   
 
@@ -207,7 +218,7 @@ def understand(video_path, output_dir, device="auto"):
         if relative_position: # Case 2), relative to an object
 
             table_bb = object_detector.detect(target_image, "table")[0].box
-            table_cells = voronoi_segmenting(table_bb.xmax, table_bb.ymax, 400, table_bb.xmin, table_bb.ymin)
+            table_cells = voronoi_segmenting(table_bb.xmax, table_bb.ymax, 300, table_bb.xmin, table_bb.ymin)
             table_cells_regions = [[table_cells.vertices[p] for p in r] for r in table_cells.regions]
             table_cells_regions = [r for r in table_cells_regions if len(r)>0]
             table_cell_centers =  [np.array(r).mean(axis=0).tolist() for r in table_cells_regions]
@@ -249,25 +260,29 @@ def understand(video_path, output_dir, device="auto"):
                 grid = [g for g in grid if g[1][1]<reference_center[0]-obj_height]
             
             else: 
-                grid = [g for g in grid if  g[1][0]>reference_center[0]] # TODO: decide what to do when the relative position could not be understood
+                grid = grid = [g for g in grid if g[1][0]>reference_center[0]+obj_width]+  [g for g in grid if g[1][0]<reference_center[0]-obj_width]
             #print("Reference `object and relative position: ", reference_object, relative_position)
             if len(grid)>0:
                 area_target = True
                 _, center , region = zip(*grid)
-                distances = [np.sqrt( (c[0]-reference_center[0])**2+(c[1]-reference_center[1])**2 ) for c in center]
+                p1, p2 = target_pointing_vec
+        
+                distances = [np.sqrt( (c[0]-p2[0])**2+(c[1]-p2[1])**2 ) for c in center]
                 decision = list(zip(distances, region))
                 decision.sort(key=lambda x:x[0])
-                print(decision[0][0], decision[0][1])
+                # print(decision[0][0], decision[0][1])
                 # img = plt.imread(target_frame_path)
                 # fig, ax = plt.subplots()
-                # ax.imshow(img, extent=[0, 1920, 0, 1080],origin="lower")    
+                # ax.imshow(img, extent=[0, image_width, 0, image_height],origin="lower")    
                 # voronoi_plot_2d(table_cells, ax=ax)
+                
                 chosen_area = decision[0][1]
+
                 # x, y = zip(*decision[0][1])
                 # ax.scatter([reference_center[0]], [reference_center[1]])
                 # ax.fill(list(x),list(y),"r",alpha=0.3)
-                # ax.set_xlim((0, 1920))
-                # ax.set_ylim((0, 1080))
+                # ax.set_xlim((0, image_width))
+                # ax.set_ylim((0, image_height))
                 # ax.axis('off')
                 # plt.show()
             else:
@@ -276,15 +291,18 @@ def understand(video_path, output_dir, device="auto"):
         else:
             pass
 
-    else:   
-        target_results = object_detector.detect(object_image, "container") # TODO: we can further speed it up by croping the image to the pointed region
-        print("Container objects: ", object_results)
-        # target_results = [] #  TEST PURPOSES ONLY, comment/remove for final code.
-        if len(target_results)>=1:  # case 1) or 3), we need to check if the user is pointing at an object.
-            pointed_target_idx = pointed_result_index(target_results, target_pointing_vec)
-            print("Inferred target object: ", target_results[pointed_target_idx])
-        else: # if no objects are detected, target is an empty space; case 4)
-            area_target = True
+    else:
+        if not area_target: 
+            target_results = object_detector.detect(object_image, "container") # TODO: we can further speed it up by croping the image to the pointed region
+            print("Container objects: ", object_results)
+            # target_results = [] #  TEST PURPOSES ONLY, comment/remove for final code.
+            if len(target_results)>=1:  # case 1) or 3), we need to check if the user is pointing at an object.
+                pointed_target_idx = pointed_result_index(target_results, target_pointing_vec)
+                print("Inferred target object: ", target_results[pointed_target_idx])
+            else:
+                area_target = True
+
+        if area_target: # if no objects are detected, target is an empty space; case 4)
             # load depth_estimator
             depth_estimator = DepthEstimator()
             depths = depth_estimator.estimate_depth(target_frame_path).cpu()
@@ -324,7 +342,10 @@ def understand(video_path, output_dir, device="auto"):
             for i,c in enumerate(table_cell_centers):
                 x = int(c[1])
                 y = int(c[0])
-                table_cell_centers_depth.append(depths[y,x].numpy().tolist())
+                if x<0 or x> image_width or y<0 or y>image_height:
+                    table_cell_centers_depth.append(float("inf"))
+                else:
+                    table_cell_centers_depth.append(depths[y,x].numpy().tolist())
 
             for i, c in enumerate(table_cell_centers):
                 table_cell_centers[i] = c+[table_cell_centers_depth[i]]
@@ -358,22 +379,22 @@ def understand(video_path, output_dir, device="auto"):
             # grid.sort(key=lambda x:x[0])
             # chosen_area = grid[0][1]
 
-            img = plt.imread("/home/robot/Code/uncom-non-concrete-handling/output_dir/depth.png")
-            fig, ax = plt.subplots()
-            ax.scatter([p1[0]], [p1[1]], c="r")
-            ax.scatter([p2[0]], [p2[1]], c="b")
-            ax.axline((p1[0], p1[1]), (p2[0], p2[1]), color='purple', label="Infinite line")
-            ax.imshow(img, extent=[0, 1920, 0, 1080],origin="lower")    
-            voronoi_plot_2d(table_cells, ax=ax)
-            for r in table_cells_regions:
-                x, y = zip(*r)    
-                ax.fill(list(x),list(y),"g",alpha=0.3)
-            x, y = zip(*chosen_area)
-            ax.fill(list(x),list(y),"r",alpha=0.8)
-            ax.set_xlim((0, 1920))
-            ax.set_ylim((0, 1080))
-            ax.axis('off')
-            plt.show()
+            # img = plt.imread("/home/robot/Code/uncom-non-concrete-handling/output_dir/depth.png")
+            # fig, ax = plt.subplots()
+            # ax.scatter([p1[0]], [p1[1]], c="r")
+            # ax.scatter([p2[0]], [p2[1]], c="b")
+            # ax.axline((p1[0], p1[1]), (p2[0], p2[1]), color='purple', label="Infinite line")
+            # ax.imshow(img, extent=[0, 1920, 0, 1080],origin="lower")    
+            # voronoi_plot_2d(table_cells, ax=ax)
+            # for r in table_cells_regions:
+            #     x, y = zip(*r)    
+            #     ax.fill(list(x),list(y),"g",alpha=0.3)
+            # x, y = zip(*chosen_area)
+            # ax.fill(list(x),list(y),"r",alpha=0.8)
+            # ax.set_xlim((0, 1920))
+            # ax.set_ylim((0, 1080))
+            # ax.axis('off')
+            # plt.show()
             print(chosen_area)
     # unload object detector model 
     # unload hand_detector
@@ -410,7 +431,7 @@ def understand(video_path, output_dir, device="auto"):
 
     # Annotate object image
     annotated_object_image = annotate_image(
-        object_image, object_results, object_pointing_vec, emph_idx=pointed_object_idx
+        object_image, object_results, object_pointing_vec, emph_idx = pointed_object_idx
     )
     annotated_object_image_path = output_dir / "annotated_object.png"
     annotated_object_image.save(annotated_object_image_path)
