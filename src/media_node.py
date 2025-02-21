@@ -32,34 +32,31 @@ class MediaNode:
         self.video_save_sub = rospy.Subscriber('/save_video', String, self.save_video)
         self.audio_save_sub = rospy.Subscriber('/save_audio', String, self.save_audio)
 
+        # Receive requests to clear buffered audio frames
         self.clear_audio_sub = rospy.Subscriber('/clear_video', Empty, self.clear_audio_callback)
+        # Receive requests to clear buffered video frames
         self.clear_video_sub = rospy.Subscriber('/clear_audio', Empty, self.clear_video_callback)        
 
-
+        # Publishes when speech is detected
         self.speech_detected_pub = rospy.Publisher('/speech_detected', Bool, queue_size=10)
 
-
-
         # Subscribe to output directory topic (String)
-
         self.vad = webrtcvad.Vad()
         self.vad.set_mode(1) # agressiveness from 1-9 
 
         # Class variables to store recording status and output directory
-    
-    
-    
+
         self.video_record = False  # Video recording statushelp fleshing out the backstory for this clan's arrival in Brazil?
 
-        self.audio_record = False  # Audio recording status
-        self.output_dir = Path()  # Output directory as a Path object
-        self.audio_frames = Queue()  # List to store audio frames
+        self.audio_record = False  # Audio recording status;
+        self.output_dir = Path()  # Output directory as a Path object;
+        self.audio_frames = Queue()  # List to store audio frames;
         self.audio_buffer = Queue()
-        self.video_frames = Queue()  # List to store video frames
-        self.framerate = 30.0
-        self.dim = (640, 480)
-        self.sample_rate = 44100
-        self.speech_detected = False
+        self.video_frames = Queue()  # List to store video frames;
+        self.framerate = 30.0  # camera framerate;
+        self.dim = (640, 480)  # camera image frame dimensions;
+        self.sample_rate = 44100  # microphone sampling rate;
+        self.speech_detected = False  # stores whether speech has already been detected or not.
 
     def video_recording_callback(self, msg):
         """
@@ -109,9 +106,15 @@ class MediaNode:
             rospy.logerr(f"Failed to convert audio data: {e}")
 
     def clear_audio_callback(self,msg):
+        """
+        Helper fucntion that clears all stored audio_frames
+        """
         self.audio_frames = Queue()
 
     def clear_video_callback(self,msg):
+        """
+        Helper fucntion that clears all stored video_frames
+        """
         self.video_frames = Queue()
 
     def publish_speech_detected(self, status):
@@ -125,6 +128,9 @@ class MediaNode:
         rospy.loginfo(f"Published speech detection status: {status}")
 
     def save_video(self, msg):
+        """
+        Helper function that saves currently stored video frames
+        """
         path = msg.data
         if not Path(path).parent.exists():
             rospy.logerr(f"Directory for {path} does not exist!")
@@ -139,6 +145,9 @@ class MediaNode:
         out.release()
 
     def save_audio(self, msg):
+        """
+        Helper function that saves currently stored audio frames
+        """
         # Concatenate the audio frames into one array
         path = msg.data
         audio = np.concatenate(list(self.audio_frames.queue))
@@ -147,6 +156,9 @@ class MediaNode:
         rospy.loginfo(f"Audio saved to {path}")
 
     def detect_speech(self):
+        """
+        Helper method that detects speech in the frames stored in the audio buffer.
+        """
         frame_duration = 10  # Frame duration in milliseconds
         frame_size = int(self.sample_rate * frame_duration / 1000)  # Frame size in samples
         frames = list(self.audio_buffer.queue)

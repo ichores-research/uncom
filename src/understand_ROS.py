@@ -1,8 +1,3 @@
-import argparse
-import os
-import shutil
-import tempfile
-from pathlib import Path
 import torch
 
 from uncom_utils.audio import AudioTranscriber, separate_audio
@@ -16,19 +11,13 @@ from uncom_utils.image import (
     load_image,
     pointed_result_index,
 )
-from uncom_utils.text import CommandExtractor
+from uncom_utils.text import CommandExtractor, check_relative_position
 
-import webrtcvad
-import pyaudio
 import numpy as np
-from scipy.io import wavfile
 import rospy
 from std_msgs.msg import Bool, String, Empty
 from pal_interaction_msgs.msg import TtsAction, TtsGoal
-import sys
-import random
 from actionlib import SimpleActionClient
-
 
 class UnderstandingNode:
     def __init__(self, output_dir=None, device = 'auto'):
@@ -108,7 +97,7 @@ class UnderstandingNode:
         """
         Publish the file path to save the video to the /save_video_topic.
         :param file_path: String - Path to the video file to save
-        """audio
+        """
         msg = String()
         msg.data = file_path
         self.save_video_pub.publish(msg)
@@ -124,7 +113,7 @@ class UnderstandingNode:
         self.save_audio_pub.publish(msg)
         rospy.loginfo(f"Published audio save path: {file_path}")
 
-    def publish_clear_audio(self):
+    def publish_clear_audio(self, file_path):
         """
         Publish a request to clear currently buffered audio frames.
         """
@@ -132,7 +121,7 @@ class UnderstandingNode:
         msg.data = file_path
         self.clear_audio_pub.publish(msg)
 
-    def publish_clear_video(self):
+    def publish_clear_video(self, file_path):
         """
         Publish a request to clear currently buffered video frames.
         """
@@ -148,6 +137,9 @@ class UnderstandingNode:
         self.tiago_talk("Sorry, I am not able to understand your command, could you please repeat it again?")
 
     def tts_connection():
+        """
+        Returns a one-use simple action server for sending text to speech requests to TIAGo
+        """
         tts_client = SimpleActionClient('/tts', TtsAction)
         tts_client.wait_for_server()
         return tts_client
@@ -155,7 +147,7 @@ class UnderstandingNode:
     def tiago_talk(self, speech):
         try:
             print("Requesting speech action")
-            tts_client = connection()
+            tts_client = self.connection()
             goal = TtsGoal()
             goal.rawtext.text = speech
             goal.rawtext.lang_id = 'en_GB'
@@ -164,9 +156,16 @@ class UnderstandingNode:
         except rospy.ROSInterruptException:
             print("Abruptly finished!")
 
-    def execute(self, object_1_location, action, object_2_location): pass #TODO: implement pointing and explaining back the command
+    def execute(self, object_1_location, action, object_2_location): 
+        """
+            Method that executes pointing gesture and speaks what was understood back to the user.
+        """
+        pass #TODO: implement pointing and explaining back the command
 
     def understand(self, device='auto', output_dir="", audio_file="", video_file=""):
+        """
+            Main Function of the package, performs the task understanding from the audio and video of the real time explanation.
+        """
         if device == "auto":
             device = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -223,21 +222,15 @@ class UnderstandingNode:
         torch.cuda.empty_cache()
 
         # Extract relevant frames from the video
-        object_frame_path = extract_frame(tmp_video_path, command.object.timestamp[1])
-        target_frame_path = extract_frame(tmp_video_path, command.target.timestamp[1])
+        object_frame_path = extract_frame(self.video_path, command.object.timestamp[1])
+        target_frame_path = extract_frame(self.video_path, command.target.timestamp[1])
 
         print(f"Extracted {command.object.timestamp[1]}s frame from {object_frame_path}")
         print(f"Extracted {command.target.timestamp[1]}s frame from {target_frame_path}")
 
         # Load images of the extracted frames
         object_image = load_image(object_frame_path)
-        target_image = load_image(target_frame_path)import json
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional, Union
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-import nltk 
-from nltk.corpus import stopwords
+        target_image = load_image(target_frame_path)
         # Load oject detector model
         object_detector = ObjectDetector(device=device, torch_dtype=torch_dtype)
         # Detect objects in the corresponding frames
@@ -254,13 +247,7 @@ from nltk.corpus import stopwords
             target_results = object_detector.detect(target_image, command.target.text)
 
         print(f"Detected {len(object_results)} object instances of '{command.object.text}'")
-        if len(target_results)>0:import json
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Optional, Union
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
-import nltk 
-from nltk.corpus import stopwords
+        if len(target_results)>0:
             print(f"Detected {len(target_results)} target instances of '{command.target.text}'")
         else:
             print(f"\n\n\n'{command.target.text}' could not be detected.\n\n\n")
@@ -296,7 +283,7 @@ from nltk.corpus import stopwords
                     object_pointing_vec = hand_detector.detect(object_frame_path)
                 except Exception as e:
                     print(e)
-                    object_pointing_vec = np.array([float(inf),float(inf),float(inf),])
+                    object_pointing_vec = np.array([float("inf"),float("inf"),float("inf"),])
                 pointed_object_idx = 0
         else:  # non-concrete object cases
             try:
