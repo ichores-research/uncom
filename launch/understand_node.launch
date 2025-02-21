@@ -1,0 +1,4 @@
+<launch>
+  <!-- Launch node 1 -->
+    <node name="understand_node" pkg="uncom" type="understand_ROS.py" output="screen" />
+</launch>

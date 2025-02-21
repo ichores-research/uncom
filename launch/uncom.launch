@@ -1,0 +1,7 @@
+<launch>
+  <!-- Include launch for node 1 -->
+  <include file="$(find uncom)/launch/media_node.launch" />
+  
+  <!-- Include launch for node 2 -->
+  <include file="$(find uncom)/launch/understand_node.launch" />
+</launch>
