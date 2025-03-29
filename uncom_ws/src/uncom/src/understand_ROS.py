@@ -1,30 +1,22 @@
 #!/usr/bin/env python3
-import argparse
-import os
-import shutil
-import tempfile
 from pathlib import Path
-import webrtcvad
-import pyaudio
 import numpy as np
-from scipy.io import wavfile
 import rospy
 from std_msgs.msg import Bool, String, Empty
 from pal_interaction_msgs.msg import TtsAction, TtsGoal
-import sys
-import random
 from actionlib import SimpleActionClient
 import json
 import paho.mqtt.client as mqtt
 from threading import Thread
 from time import time, sleep
 import tf 
-from geometry_msgs.msg import PoseStamped, Pose, TransformStamped
+from geometry_msgs.msg import Pose, TransformStamped
 from sensor_msgs.msg import CameraInfo
 from sensor_msgs.msg import Image
 from ast import literal_eval
 import moveit_commander
 import tf2_ros
+
 
 understood = []
 
@@ -49,7 +41,7 @@ client.subscribe("inference/response")
 
 
 class UnderstandingNode:
-    def __init__(self, output_dir=None, device = 'auto', mqtt_client = client):
+    def __init__(self, mqtt_client = client):
         # Initialize the ROS Node
         rospy.init_node('understanding_node')
         self.mqtt_client = mqtt_client
@@ -225,24 +217,6 @@ class UnderstandingNode:
         except CvBridgeError as e:
             rospy.logerr("Error reading the depth frame: %s", str(e))
             self.depth_frame = None
-
-    def transform_point_cloud(self, point_cloud):
-        # Create a transformation matrix from the translation and rotation
-
-        # obtains the transform betwee TIAGo's base and the depth camera frames
-
-        transform_matrix = tf.transformations.quaternion_matrix(self.head_base_rot)
-        transform_matrix[0:3, 3] = self.head_base_trans
-        transformed_points = []
-        print("POINT CLOUD: ", point_cloud)
-        for point in point_cloud:
-            # Convert point to homogeneous coordinates
-            point_homogeneous = np.array([point[0], point[1], point[2], 1.0])
-            # Apply the transformation
-            transformed_point = np.dot(transform_matrix, point_homogeneous)
-            transformed_points = transformed_point[:3]
-
-        return transformed_points
 
     def set_object_tf(self, center, input_tf):
         x, y = center
