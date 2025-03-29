@@ -404,7 +404,7 @@ class UnderstandingNode:
         
         if not self.simulation:
             self.tiago_talk(f"Would you like me to pick {object}")
-        sleep(2)
+        rospy.sleep(2)
         if not self.simulation:
             self.tiago_talk(f"and {action}")
 
@@ -412,7 +412,7 @@ class UnderstandingNode:
 
         if not self.simulation:
             self.tiago_talk(f"at {target}?")
-        sleep(2)
+        rospy.sleep(2)
         
         self.saved_depth_frame = None
         #TODO 1: IMPLEMENT WAITING FOR HUMAN CONFIRMATION 
