@@ -1,4 +1,0 @@
-<launch>
-  <!-- Launch node 1 -->
-  <node name="media_node" pkg="uncom" type="media_node.py" output="screen" />
-</launch>

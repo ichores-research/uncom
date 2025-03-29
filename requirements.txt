@@ -1,4 +1,4 @@
-homeabsl-py
+#homeabsl-py
 accelerate 
 aiohttp 
 aiosignal 
@@ -16,7 +16,7 @@ decorator
 dill 
 einops 
 filelock 
-flash_attn 
+#flash_attn 
 flatbuffers
 fonttools 
 frozenlist 

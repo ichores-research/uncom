@@ -28,8 +28,8 @@ class AudioTranscriber:
     Speech-to-text with timestamps.
     """
     def __init__(self, device="cuda", torch_dtype="auto") -> None:
-        # Whisper model
-        model_id = "openai/whisper-large-v3"
+        # Whisper laarge turbo model
+        model_id = "openai/whisper-large-v3-turbo"
         model = AutoModelForSpeechSeq2Seq.from_pretrained(
             model_id, use_safetensors=True, device_map=device, torch_dtype=torch_dtype
         )

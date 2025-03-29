@@ -31,12 +31,9 @@ include_directories(
 catkin_install_python(PROGRAMS
   src/media_node.py
   src/understand_ROS.py
+  src/simulation_audio.py
+  src/arm_move.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-)
-
-## Install the uncom_utils folder
-install(DIRECTORY src/uncom_utils/
-  DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}/uncom_utils
 )
 
 ## Install launch files

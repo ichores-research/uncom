@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name='vad_aggressiveness' default='3'/>
+  <arg name='camera_fps' default='30'/>
+  <arg name='camera_image_width' default='640'/>
+  <arg name='camera_image_height' default='320'/>
+  <arg name='audio_rate' default='48000'/>
+  <!-- Launch node 1 -->
+  <param name='vad_aggressiveness' type='int' value='$(arg vad_aggressiveness)'/>
+  <param name='camera_fps' type='int' value='$(arg camera_fps)'/>
+  <param name='camera_image_width' type='int' value='$(arg camera_image_width)'/>
+  <param name='camera_image_height' type='int' value='$(arg camera_image_height)'/>
+  <param name='audio_rate' type='int' value='$(arg audio_rate)'/>
+  <node name="media_node" pkg="uncom" type="media_node.py" output="screen" />
+</launch>

@@ -1,0 +1,10 @@
+<launch>
+  <!-- Include launch for node 1 -->
+  <include file="$(find uncom)/launch/media_node.launch" />
+  
+  <!-- Introduce a delay before running the second launch file -->
+  <group ns="understand_node">
+    <param name="launch-prefix" value="bash -c 'sleep 3; exec '" />
+    <include file="$(find uncom)/launch/understand_node.launch" />
+  </group>
+</launch>

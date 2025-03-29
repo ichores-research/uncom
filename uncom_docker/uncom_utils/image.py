@@ -2,7 +2,6 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
-
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -28,11 +27,8 @@ import urllib
 import mmcv
 from mmcv.runner import load_checkpoint
 from random import choice
-
-
 from transformers import AutoModelForMaskGeneration, AutoProcessor, pipeline
-
-from uncom.geometry import points_straight_distance, straight_from_points
+from uncom_utils.geometry import points_straight_distance, straight_from_points
 
 
 def voronoi_segmenting(x_max, y_max, seed_num, x_min=0, y_min=0): #, img):
@@ -69,12 +65,13 @@ def extract_frame(video_path, time):
         "-ss",
         str(time),
         "-i",
-        video_path,
+        str(video_path),
         "-frames:v",
         "1",
         "-q:v",
         "1",
-        image_path,
+        "-y",
+        str(image_path),
     ]
     subprocess.run(
         command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
@@ -320,7 +317,7 @@ def annotate_image(
     # Convert PIL Image to OpenCV format
     image_cv2 = np.array(image) if isinstance(image, Image.Image) else image
     image_cv2 = cv2.cvtColor(image_cv2, cv2.COLOR_RGB2BGR)
-
+    print("THIS IS POINTING VECTOR: ", pointing_vec)
     # Iterate over detections and add bounding boxes and masks
     for i, detection in enumerate(detection_results):
         label = detection.label
@@ -359,13 +356,14 @@ def annotate_image(
             cv2.drawContours(image_cv2, contours, -1, color.tolist(), 2)
 
     # Draw pointing vector
-    cv2.arrowedLine(
-        image_cv2,
-        (pointing_vec[0, 0], pointing_vec[0, 1]),
-        (pointing_vec[1, 0], pointing_vec[1, 1]),
-        (0, 255, 0),
-        2,
-    )
+    if pointing_vec:
+        cv2.arrowedLine(
+            image_cv2,
+            (pointing_vec[0, 0], pointing_vec[0, 1]),
+            (pointing_vec[1, 0], pointing_vec[1, 1]),
+            (0, 255, 0),
+            2,
+        )
 
     image_rgb = cv2.cvtColor(image_cv2, cv2.COLOR_BGR2RGB)
 
@@ -713,9 +711,9 @@ def annotate_action(
 
     # Choose a font and size
     try:
-        font = ImageFont.truetype("arial.ttf", 120)
+        font = ImageFont.truetype("arial.ttf", 30)
     except IOError:
-        font = ImageFont.load_default(size=120)
+        font = ImageFont.load_default(size=30)
 
     # Calculate the bounding box of the caption text
     text_bbox = draw.textbbox((0, 0), caption, font=font)
