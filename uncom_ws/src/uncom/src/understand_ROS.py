@@ -214,7 +214,7 @@ class UnderstandingNode:
         """
         try:
             self.depth_frame = msg
-        except CvBridgeError as e:
+        except Exception as e:
             rospy.logerr("Error reading the depth frame: %s", str(e))
             self.depth_frame = None
 

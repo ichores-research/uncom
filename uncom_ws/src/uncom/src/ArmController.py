@@ -1,19 +1,12 @@
 #!/usr/bin/env python3
-from pathlib import Path
 import numpy as np
 import rospy
-from std_msgs.msg import Bool, String, Empty
-from pal_interaction_msgs.msg import TtsAction, TtsGoal
-from actionlib import SimpleActionClient
-import json
-import paho.mqtt.client as mqtt
 from threading import Thread
-from time import time, sleep
+from time import time
 import tf 
 from geometry_msgs.msg import Pose, TransformStamped
 from sensor_msgs.msg import CameraInfo
 from sensor_msgs.msg import Image
-from ast import literal_eval
 import moveit_commander
 import tf2_ros
 
@@ -42,13 +35,11 @@ class ArmInterface:
         self.group_arm_torso.set_planner_id("SBLkConfigDefault")
         self.group_arm_torso.set_pose_reference_frame(self.arm_plan_tf)
 
-
        ## listen to TIAGo's tf tree
         print("Looking for robot part' s location")
         self.tf_listener = tf.TransformListener()
         # waits to see if a transform is possible
         print ("Can we find a tranform between the base and the camera?")
-
 
         self.tf_listener.waitForTransform(self.arm_plan_tf, self.depth_camera_tf, rospy.Time(), rospy.Duration(5.0))
         self.tf_listener.waitForTransform(self.arm_plan_tf, self.shoulder_tf, rospy.Time(), rospy.Duration(5.0))
@@ -75,12 +66,16 @@ class ArmInterface:
         self.camera_info = rospy.wait_for_message('/xtion/depth/camera_info', CameraInfo)
 
         timer = rospy.Timer(rospy.Duration(0.1), self.tf_callback)
+        timer 
 
     def tf_callback(self, event):
         for transf in [self.object_tf, self.object_pointing_tf, self.target_tf, self.target_pointing_tf]:
             if transf is not None:
                 transf.header.stamp = rospy.Time.now()
                 self.transform_broadcaster.sendTransform(transf)
+
+    def store_current_depth_frame(self):
+        self.saved_depth_frame = self.depth_frame
 
     def depth_callback(self, msg):
         """
@@ -89,7 +84,7 @@ class ArmInterface:
         """
         try:
             self.depth_frame = msg
-        except CvBridgeError as e:
+        except Exception as e:
             rospy.logerr("Error reading the depth frame: %s", str(e))
             self.depth_frame = None
 
@@ -128,7 +123,6 @@ class ArmInterface:
         return pose
 
     def move_arm_to_pose(self, goal):
-
         self.group_arm_torso.set_pose_target(goal)
         self.group_arm_torso.set_planning_time(5.0)
         self.group_arm_torso.set_start_state_to_current_state()
@@ -156,16 +150,18 @@ class ArmInterface:
         goal = self.tf_to_pose(object_to_base_transform)
         self.move_arm_to_pose(goal)
 
+    def move_arm_to_pixel(self, x, y):
+        self.store_current_depth_frame()  # Comment this line if you use updated images of the environment during the process instead of planning everything on the start from the initial picture 
+        self.set_object_tf((x, y), self.object_tf)
+        rospy.sleep(0.2)
+        self.move_arm_to_tf(self.object_tf.child_frame)
+
     def run(self):
         # Run the ROS node
         rospy.spin()
 
 
 if __name__ == '__main__':
-    # Instantiate the UnderstandingNode class and run the node
-    client_thread = Thread(target=loop_client,args=[client])
-    client_thread.start()
-
-    node = UnderstandingNode()
+    node = ArmInterface()
     node.run()
 
