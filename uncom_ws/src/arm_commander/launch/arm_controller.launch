@@ -1,0 +1,4 @@
+<?xml version="1.0"?>
+<launch>
+  <node name="arm_controller_node" pkg="arm_commander" type="ArmController.py" output="screen" />
+</launch>
