@@ -244,7 +244,7 @@ class ArmInterface:
         @param goal<geometry_msgs.msg.Pose>: destination to which the robot arm's manipulator should move.
         @return None"""
         self.group_arm_torso.set_pose_target(goal)
-        self.group_arm_torso.set_planning_time(5.0)
+        self.group_arm_torso.set_planning_time(50.0)
         self.group_arm_torso.set_start_state_to_current_state()
         self.group_arm_torso.set_max_velocity_scaling_factor(1.0)
 

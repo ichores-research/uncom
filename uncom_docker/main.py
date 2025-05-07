@@ -1,13 +1,27 @@
 #!/usr/bin/env python3
+
+###############################################################################
+#               ██    ██ ███    ██  ██████   ██████     ███    ███            #
+#               ██    ██ ████   ██ ██      ██  ██  ██   ████  ████            # 
+#               ██    ██ ██ ██  ██ ██    ██   ████   ██ ██ ████ ██            #
+#               ██    ██ ██  ██ ██ ██      ██  ██  ██   ██  ██  ██            #
+#                ██████  ██   ████  ██████   ██████     ██      ██            #
+###############################################################################
+#                      UNCOM - Understanding Commands                         #
+###############################################################################
+# Authors: Antonio Galiza Cerdeira Gonzalez, Pawel Gajewski and Bipin         #
+# Indurkhya                                                                   #
+###############################################################################
+# Release version: 0.2v                                                       #
+###############################################################################
+# For inquiries, please contact: angacego (at) gmail.com                      #
+###############################################################################
+
 import time
 t0=time.time()
-import argparse
-import os
-import shutil
-import tempfile
 from pathlib import Path
 import torch
-from uncom_utils.audio import AudioTranscriber, separate_audio
+from uncom_utils.audio import AudioTranscriber#, separate_audio
 from uncom_utils.image import (
     PointingDetector,
     ObjectDetector,
@@ -15,17 +29,17 @@ from uncom_utils.image import (
     DetectionResult,
     BoundingBox,
     DepthEstimator,
+    SimilarityCalculator,
     annotate_action,
     annotate_image,
     extract_frame,
     load_image,
     pointed_result_index,
     voronoi_segmenting,
-    line_plane_intersection,
-    closest_to_fingertip,
+    #line_plane_intersection,
     minimum_distante_to_vector_line
 )
-from uncom_utils.text import CommandExtractor, check_relative_position
+from uncom_utils.text import CommandExtractor, check_relative_position, check_agreement
 from shapely.geometry import Polygon
 import matplotlib.pyplot as plt
 from scipy.spatial import voronoi_plot_2d
@@ -33,6 +47,11 @@ import numpy as np
 import paho.mqtt.client as mqtt
 import json
 from ast import literal_eval
+
+def check_agree(audio_path, device='auto'):
+    transcriber = AudioTranscriber(device=device, torch_dtype=torch_dtype)
+    transcription = transcriber.transcribe(str(audio_path))
+    return check_agreement(transcription['text'])
 
 def understand(audio_path, video_path, device="auto"):
 
@@ -51,7 +70,12 @@ def understand(audio_path, video_path, device="auto"):
     video_path = Path(video_path)
     audio_path = Path(audio_path)
     output_dir = video_path.parent
- 
+
+    same_property = False # TODO: pick objects with similar properties to the pointed/refered one
+    similar_object = True # TODO: implement selecting objects that look similar to the pointed object
+    how_many_instances = 1 # TODO: implement setting number of similar objects. 
+    multiple_objects = False # TODO: allow picking multiple objects
+
     # Transcribe the audio
     transcription = transcriber.transcribe(str(audio_path))
     # transcription = {'text': 'Take the Pringles can and put it on top of the coca cola.', 
@@ -80,12 +104,16 @@ def understand(audio_path, video_path, device="auto"):
     print("Transcription: ", transcription)
 
     if not complete:
-        print("ERROR 1")
+        print("FAILURE 1")
         return ["incomplete"]
-    
 
     command = command_extractor.extract(transcription)
-
+    
+    if len(command.object)>1:
+        multiple_objects = True
+    else:
+        command.object = command.object[0]
+        
     print("Command:", command)
     command_path = output_dir / "command.json"
     command.save(command_path)
@@ -96,8 +124,11 @@ def understand(audio_path, video_path, device="auto"):
     torch.cuda.empty_cache()
 
     # Extract relevant frames from the video
-    object_frame_path = extract_frame(video_path, command.object.timestamp[1])
-    target_frame_path = extract_frame(video_path, command.target.timestamp[1])
+    time = command.object.timestamp[1] if command.object.timestamp[1] else command.object.timestamp[0]
+    object_frame_path = extract_frame(video_path, time)
+    
+    time = command.target.timestamp[1] if command.target.timestamp[1] else command.target.timestamp[0]
+    target_frame_path = extract_frame(video_path, time)
 
     print(f"Extracted {command.object.timestamp[1]}s frame from {object_frame_path}")
     print(f"Extracted {command.target.timestamp[1]}s frame from {target_frame_path}")
@@ -149,7 +180,7 @@ def understand(audio_path, video_path, device="auto"):
                        (target_concrete and len(target_results)==0))  # checks if the targect is concrete but could not be identified
     
     if impossible_task:
-        print("ERROR 2")
+        print("FAILURE 2")
         return ["ambiguous"]
     
     pointed_object_idx = None
@@ -165,7 +196,7 @@ def understand(audio_path, video_path, device="auto"):
                 object_pointing_vec = hand_detector.detect(object_frame_path)
             except Exception as e:
                 print(e)
-                object_pointing_vec = np.array([float(inf),float(inf),float(inf),])
+                object_pointing_vec = np.array([float("inf"),float("inf"),float("inf"),])
             pointed_object_idx = 0
     else:  # non-concrete object cases
         try:
@@ -176,7 +207,7 @@ def understand(audio_path, video_path, device="auto"):
             print("Inferred object to be picked: ", object_results[pointed_object_idx])
 
         except Exception as e:
-            print("ERROR 3")
+            print("FAILURE 3")
             return ["ambiguous"]
 
     target_pointing_vec = hand_detector.detect(target_frame_path)
@@ -197,13 +228,13 @@ def understand(audio_path, video_path, device="auto"):
     if target_concrete:   
 
         pointed_target_idx = 0 
-        if len(target_results) > 1:
+        if len(target_results) > 1 and len(target_pointing_vec)>0:
             print(f"Detected target pointing {target_pointing_vec}")
             pointed_target_idx = pointed_result_index(target_results, target_pointing_vec)
         elif len(target_results) == 1:
             pointed_target_idx = 0
         else:
-            print("ERROR 4")
+            print("FAILURE 4")
             return ["ambiguous"]
 
         if relative_position: # Case 2), relative to an object
@@ -277,7 +308,7 @@ def understand(audio_path, video_path, device="auto"):
                 # ax.axis('off')
                 # plt.show()
             else:
-                print("ERROR 5")
+                print("FAILURE 5")
                 return ["ambiguous"]
         else:
             pass
@@ -310,9 +341,8 @@ def understand(audio_path, video_path, device="auto"):
             print("Fingers: ", p1, p2)
             target_pointing_vec_3D = np.array(p2)-np.array(p1)
 
-            ######################################################################################################
-            #                   TODO: Transform this into a function to increase readability                     #
-            ######################################################################################################
+######################################################################################################
+
             table_bb = object_detector.detect(target_image, "table")[0].box
             table_cells = voronoi_segmenting(table_bb.xmax, table_bb.ymax, 400, table_bb.xmin, table_bb.ymin)
             table_cells_regions = [[table_cells.vertices[p] for p in r] for r in table_cells.regions]
@@ -357,7 +387,9 @@ def understand(audio_path, video_path, device="auto"):
         
             grid = list(zip(occupancy_grid, table_cell_centers, table_cells_regions))
             grid = [g for g in grid if not g[0]]
-            ##########################################################################################################
+
+##########################################################################################################
+
             _, table_cell_centers, table_cells_regions = zip(*grid)
 
 
@@ -394,6 +426,10 @@ def understand(audio_path, video_path, device="auto"):
     del hand_detector
     torch.cuda.empty_cache()
     
+    if pointed_object_idx is None or pointed_target_idx is None:
+        print("FAILURE 7")
+        return ['ambiguous']
+
     # load segmenter model 
     segmenter = Segmenter(device=device, torch_dtype=torch_dtype)
 
@@ -448,18 +484,24 @@ def understand(audio_path, video_path, device="auto"):
     
     except Exception as e:
         print (f"Failed to extract bouding box due to error: {e}")
-        print("ERROR 6")
+        print("FAILURE 7")
         return ["ambiguous"]
 
 def on_message(client, userdata, message):
     file_paths = literal_eval(json.loads(message.payload.decode("utf-8")))
     audio_path = file_paths[0]
     video_path = file_paths[1]
+    inference = file_paths[2]
     # try:
-    result = understand(audio_path, video_path)
-    print(result)
+    result = None
+    if inference == 'understand':
+        result = understand(audio_path, video_path)
+        print(result)
+    elif inference == 'check_agree':
+        result = [check_agree(audio_path)]
+        print(result)
     client.publish("inference/response", json.dumps(str(result)))
-    # except Exception as e:
+        # except Exception as e:
     # print(f"Understanding commands failed due to {e}")
     # client.publish("inference/response", json.dumps(["ambiguous"]))
 

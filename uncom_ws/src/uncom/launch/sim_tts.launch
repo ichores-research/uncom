@@ -1,0 +1,4 @@
+<?xml version="1.0"?>
+<launch>
+  <node name="simulation_tts_node" pkg="uncom" type="simulation_tts.py" output="screen" />
+</launch>

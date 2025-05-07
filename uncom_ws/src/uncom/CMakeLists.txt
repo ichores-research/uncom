@@ -8,8 +8,22 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
 )
 
+## Generate services in the 'srv' folder
+add_service_files(
+  FILES
+  MoveToCartesian.srv
+  OpenCloseGripper.srv
+  SetGripperJoints.srv
+)
+
+## Generate added messages and services with any dependencies listed here
+generate_messages(
+  DEPENDENCIES
+  std_msgs
+)
+
 catkin_package(
-  CATKIN_DEPENDS actionlib pal_interaction_msgs rospy std_msgs
+  CATKIN_DEPENDS actionlib pal_interaction_msgs rospy std_msgs message_runtime
 )
 
 ###########
@@ -33,6 +47,8 @@ catkin_install_python(PROGRAMS
   src/understand_ROS.py
   src/simulation_audio.py
   src/arm_move.py
+  src/HeadController.py
+  src/simulation_tts.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

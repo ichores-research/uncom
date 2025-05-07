@@ -8,11 +8,15 @@
   <license>TODO</license>
 
   <buildtool_depend>catkin</buildtool_depend>
+  <build_depend>message_generation</build_depend>
 
   <depend>rospy</depend>
   <depend>std_msgs</depend>
   <depend>pal_interaction_msgs</depend>
   <depend>actionlib</depend>
+
+  <!-- Add any ROS1 dependencies that your package needs -->
+  <exec_depend>message_runtime</exec_depend>
 
   <!-- Add any Python dependencies that your package needs -->
   <exec_depend>python-nltk</exec_depend>
@@ -20,6 +24,7 @@
   <exec_depend>python-transformers</exec_depend>
   <exec_depend>python-pyaudio</exec_depend>
   <exec_depend>python-webrtcvad</exec_depend>
+  
 
   <export>
   </export>

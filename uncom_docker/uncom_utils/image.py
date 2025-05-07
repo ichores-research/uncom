@@ -27,8 +27,9 @@ import urllib
 import mmcv
 from mmcv.runner import load_checkpoint
 from random import choice
-from transformers import AutoModelForMaskGeneration, AutoProcessor, pipeline
+from transformers import AutoModelForMaskGeneration, AutoProcessor, pipeline, AutoImageProcessor, AutoModel
 from uncom_utils.geometry import points_straight_distance, straight_from_points
+import faiss
 
 
 def voronoi_segmenting(x_max, y_max, seed_num, x_min=0, y_min=0): #, img):
@@ -356,7 +357,7 @@ def annotate_image(
             cv2.drawContours(image_cv2, contours, -1, color.tolist(), 2)
 
     # Draw pointing vector
-    if pointing_vec:
+    if pointing_vec.size>0:
         cv2.arrowedLine(
             image_cv2,
             (pointing_vec[0, 0], pointing_vec[0, 1]),
@@ -488,7 +489,6 @@ class Segmenter:
 # # Depth Estimation <a target="_blank" href="https://colab.research.google.com/github/facebookresearch/dinov2/blob/main/notebooks/depth_estimation.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/></a>
 
 
-
 class CenterPadding(torch.nn.Module):
     def __init__(self, multiple):
         super().__init__()
@@ -506,6 +506,52 @@ class CenterPadding(torch.nn.Module):
         pads = list(itertools.chain.from_iterable(self._get_pad(m) for m in x.shape[:1:-1]))
         output = F.pad(x, pads)
         return output
+
+class SimilarityCalculator:
+    def __init__(self):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
+        self.processor = AutoImageProcessor.from_pretrained('facebook/dinov2-small')
+        self.model = AutoModel.from_pretrained('facebook/dinov2-small').to(self.device)
+        self.index = faiss.IndexFlatL2(384)
+    
+    def add_vector_to_index(self, embedding):
+        #convert embedding to numpy
+        vector = embedding.detach().cpu().numpy()
+        #Convert to float32 numpy
+        vector = np.float32(vector)
+        #Normalize vector: important to avoid wrong results when searching
+        faiss.normalize_L2(vector)
+        #Add to index
+        self.index.add(vector)
+
+    def generate_faiss_index(self, image, object_list):
+        bbox_list = []
+        for obj in object_list:
+            bbox_list.append(obj.box)
+        list_of_images = [image.crop(i) for i in bbox_list]
+        for img in list_of_images:
+            with torch.no_grad():
+                inputs = self.processor(images=img, return_tensors="pt").to(self.device)
+                outputs = self.model(**inputs)
+            features = outputs.last_hidden_state
+            self.add_vector_to_index( features.mean(dim=1))
+        faiss.write_index(self.index,"vector.index")
+
+    def find_most_similar(self, image, object_bbox, other_objects_list):
+        object_image = image.crop(object_bbox)
+        self.generate_faiss_index(image, other_objects_list)
+        with torch.no_grad():
+            inputs = self.processor(images=object_image, return_tensors="pt").to(self.device)
+            outputs = self.model(**inputs)
+        embeddings = outputs.last_hidden_state
+        embeddings = embeddings.mean(dim=1)
+        vector = embeddings.detach().cpu().numpy()
+        vector = np.float32(vector)
+        faiss.normalize_L2(vector)
+        self.index = faiss.read_index("vector.index")
+        d, most_similar_obj_index = self.index.search(vector,1)
+        print('distances:', d, 'indexes:', most_similar_obj_index)
+        return most_similar_obj_index 
 
 
 class DepthEstimator:
@@ -611,11 +657,14 @@ def pointed_result_index(
     """
 
     # Solved by rotating the reference frame so that the pointing vector is along the x-axis
-    straight = straight_from_points(pointing_vec[0], pointing_vec[1])
-    points = np.array([r.box.center for r in detection_results])
-    distances = points_straight_distance(points, straight)
-    idx = np.argmin(distances)
-
+    try:
+        straight = straight_from_points(pointing_vec[0], pointing_vec[1])
+        points = np.array([r.box.center for r in detection_results])
+        distances = points_straight_distance(points, straight)
+        idx = np.argmin(distances)
+    except Exception as e :
+        print(f"Pointed entity detection failure: {e}") 
+        idx = None
     return idx
 
 

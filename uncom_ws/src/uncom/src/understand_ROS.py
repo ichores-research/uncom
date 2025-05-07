@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 from pathlib import Path
 import numpy as np
 import rospy
@@ -10,13 +11,12 @@ import paho.mqtt.client as mqtt
 from threading import Thread
 from time import time, sleep
 import tf 
-from geometry_msgs.msg import Pose, TransformStamped
+from geometry_msgs.msg import PoseStamped, Pose, TransformStamped
 from sensor_msgs.msg import CameraInfo
 from sensor_msgs.msg import Image
 from ast import literal_eval
 import moveit_commander
 import tf2_ros
-
 
 understood = []
 
@@ -41,7 +41,7 @@ client.subscribe("inference/response")
 
 
 class UnderstandingNode:
-    def __init__(self, mqtt_client = client):
+    def __init__(self, output_dir=None, device = 'auto', mqtt_client = client):
         # Initialize the ROS Node
         rospy.init_node('understanding_node')
         self.mqtt_client = mqtt_client
@@ -57,6 +57,7 @@ class UnderstandingNode:
         self.clear_audio_pub = rospy.Publisher('/clear_audio', Empty, queue_size=10)
 
         self.speech_detected_sub = rospy.Subscriber('/speech_detected', Bool, self.speech_detected_callback)
+        
 
         # Subscribe to registered_depth topic
         self.depth_sub = rospy.Subscriber('/xtion/depth_registered/image_raw', Image, self.depth_callback)
@@ -73,7 +74,8 @@ class UnderstandingNode:
 
         self.speech_detected = False
         self.silence_time = 0
-        self.max_silence = 500
+        self.max_silence = 500  
+        self.wait_confirmation = False
 
         self.goal_pose = Pose()
         self.depth_frame = None
@@ -88,9 +90,10 @@ class UnderstandingNode:
         self.scene = moveit_commander.PlanningSceneInterface()
         self.group_arm_torso = moveit_commander.MoveGroupCommander("arm_torso")
 
+        self.group_gripper = moveit_commander.MoveGroupCommander("gripper")
+
         self.group_arm_torso.set_planner_id("SBLkConfigDefault")
         self.group_arm_torso.set_pose_reference_frame(self.arm_plan_tf)
-
 
        ## listen to TIAGo's tf tree
         print("Looking for robot part' s location")
@@ -131,9 +134,10 @@ class UnderstandingNode:
         self.target_pointing_tf.child_frame_id = "pointing_target"
         self.target_pointing_tf.transform.rotation.w = 1
 
-        self.camera_info = rospy.wait_for_message('/xtion/depth/camera_info', CameraInfo)
+        self.camera_info = rospy.wait_for_message('/xtion/depth_registered/camera_info', CameraInfo)
 
         timer = rospy.Timer(rospy.Duration(0.1), self.tf_callback)
+        timer 
 
     def tf_callback(self, event):
         for transf in [self.object_tf, self.object_pointing_tf, self.target_tf, self.target_pointing_tf]:
@@ -148,6 +152,7 @@ class UnderstandingNode:
             self.publish_video_recording(True)
             self.publish_audio_recording(True)
             self.silence_time = 0
+        
         else:
             if self.speech_detected:
                 self.silence_time+=10
@@ -158,54 +163,73 @@ class UnderstandingNode:
                     self.publish_audio_recording(False)
                     self.publish_save_video(str(self.output_dir / self.video_filename))
                     self.publish_save_audio(str(self.output_dir / self.audio_filename))
-
                     global understood
-                    understood = []
-                    self.mqtt_understand_request()
-                    t0 = time()
-                    timeout = 100
-                    while not understood: 
-                        # print("Thinking", (time()-t0),"%")
-                        if time()-t0>timeout:
-                            print("Timeout error, thinking took too long!")
-                            understood = ["ambiguous"]
-                            break 
-                    print(understood, "type: ", type(understood))
 
-                    if understood[0] == "OK":
-                        execution_instructions = understood[1:]
-                        self.publish_clear_video()
-                        self.publish_clear_audio()
-                        self.publish_vad_status(False)
-                        self.execute(understood[1], understood[2], understood[3], understood[4], understood[5],)
-                        self.publish_vad_status(True)
+                    if not self.wait_confirmation:
+                        understood = []
+                        self.mqtt_understand_request()
+                        t0 = time()
+                        timeout = 100
+                        while not understood: 
+                            # print("Thinking", (time()-t0),"%")
+                            if time()-t0>timeout:
+                                print("Timeout error, thinking took too long!")
+                                understood = ["ambiguous"]
+                                break 
 
-                    elif understood[0] == "ambiguous":
-                        self.publish_clear_video()
-                        self.publish_clear_audio()
-                        self.publish_video_recording(False)
-                        self.publish_audio_recording(False)
-                        self.silence_time = 0 
-                        self.speech_detected = False
-                        self.publish_vad_status(False)
-                        if not self.simulation: 
+                        if understood[0] == "OK":
+                            self.publish_clear_video()
+                            self.publish_clear_audio()
+                            self.publish_vad_status(False)
+                            self.execute(understood[1], understood[2], understood[3], understood[4], understood[5],)
+                            self.publish_vad_status(True)
+                            self.wait_confirmation = True
+
+                        elif understood[0] == "ambiguous":
+                            self.publish_clear_video()
+                            self.publish_clear_audio()
+                            self.publish_video_recording(False)
+                            self.publish_audio_recording(False)
+                            self.silence_time = 0 
+                            self.speech_detected = False
+                            self.publish_vad_status(False)
                             self.request_repeat()
-                        else: 
-                            print("¨Sorry, could you please repeat your command again?")
-                        self.publish_vad_status(True)
+                            self.publish_vad_status(True)
 
-                    elif understood[0] == "incomplete": # Command is still incomplete, immediately resume recording video and audio
-                        self.publish_video_recording(True)
-                        self.publish_audio_recording(True)
-                        self.silence_time = 0 
-                        self.speech_detected = True
+                        elif understood[0] == "incomplete": # Command is still incomplete, immediately resume recording video and audio
+                            self.publish_video_recording(True)
+                            self.publish_audio_recording(True)
+                            self.silence_time = 0 
+                            self.speech_detected = True
 
+                        else:
+                            self.publish_video_recording(False)
+                            self.publish_audio_recording(False)
+                            self.silence_time = 0 
+                            self.speech_detected = False
+                            print("Error, unnexpected result for the understanding operation.")
                     else:
+                        understood = []
+                        self.mqtt_agree_request()
+                        while not understood:
+                            pass
+                        self.publish_clear_video()
+                        self.publish_clear_audio()
                         self.publish_video_recording(False)
                         self.publish_audio_recording(False)
                         self.silence_time = 0 
                         self.speech_detected = False
-                        print("Error, unnexpected result for the understanding operation.")
+                        self.publish_vad_status(False)
+                        self.publish_vad_status(True)
+                        self.wait_confirmation = False
+                        
+                        if understood[0]:
+                            # TODO: Implement pick & place
+                            print ("MOCK EXECUTION OF PICK & PLACE TASK")
+                        else:
+                            self.request_repeat()
+                            print ("CANCEL TASK")
+
 
     def depth_callback(self, msg):
         """
@@ -214,9 +238,27 @@ class UnderstandingNode:
         """
         try:
             self.depth_frame = msg
-        except Exception as e:
+        except CvBridgeError as e:
             rospy.logerr("Error reading the depth frame: %s", str(e))
             self.depth_frame = None
+
+    def transform_point_cloud(self, point_cloud):
+        # Create a transformation matrix from the translation and rotation
+
+        # obtains the transform betwee TIAGo's base and the depth camera frames
+
+        transform_matrix = tf.transformations.quaternion_matrix(self.head_base_rot)
+        transform_matrix[0:3, 3] = self.head_base_trans
+        transformed_points = []
+        print("POINT CLOUD: ", point_cloud)
+        for point in point_cloud:
+            # Convert point to homogeneous coordinates
+            point_homogeneous = np.array([point[0], point[1], point[2], 1.0])
+            # Apply the transformation
+            transformed_point = np.dot(transform_matrix, point_homogeneous)
+            transformed_points = transformed_point[:3]
+
+        return transformed_points
 
     def set_object_tf(self, center, input_tf):
         x, y = center
@@ -240,7 +282,6 @@ class UnderstandingNode:
         input_tf.transform.translation.x = X
         input_tf.transform.translation.y = Y
         input_tf.transform.translation.z = Z 
-   
 
     def tf_to_pose(self, transform):
         pose = Pose()
@@ -277,7 +318,6 @@ class UnderstandingNode:
             print("POINTING TF: ", pointing_tf)
         except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as e:
             rospy.logerr(f"Error in lookupTransform: {e}")
-
 
     def publish_video_recording(self, status):
         """
@@ -366,9 +406,13 @@ class UnderstandingNode:
             print("Abruptly finished!")
 
     def mqtt_understand_request(self):
-        file_paths = [str(self.output_dir / self.audio_filename), str(self.output_dir / self.video_filename)]
+        file_paths = [str(self.output_dir / self.audio_filename), str(self.output_dir / self.video_filename), 'understand']
         self.mqtt_client.publish("inference/request", json.dumps(str(file_paths)))
-        
+
+    def mqtt_agree_request(self):
+        file_paths = [str(self.output_dir / self.audio_filename), str(self.output_dir / self.video_filename), 'check_agree']
+        self.mqtt_client.publish("inference/request", json.dumps(str(file_paths)))
+
     def move_arm(self, goal):
 
         self.group_arm_torso.set_pose_target(goal)
@@ -384,27 +428,44 @@ class UnderstandingNode:
         start_time = rospy.Time.now()
         self.group_arm_torso.go(wait=True)
 
+    def set_gripper_joint_state(self, left_gripper, right_gripper, velocity=1.0):
+
+        self.group_gripper.set_start_state_to_current_state()
+        self.group_gripper.set_joint_value_target("gripper_left_finger_joint", left_gripper)
+        self.group_gripper.set_joint_value_target("gripper_right_finger_joint", right_gripper)
+        self.group_gripper.set_planning_time(1.0)        
+        self.group_gripper.set_max_velocity_scaling_factor(velocity)
+        plan = self.group_gripper.plan()
+        if not plan:
+            rospy.logerr("No plan found")
+            return
+        self.group_gripper.go(wait=True)
+
+    def open_gripper(self, velocity=1.0):
+        self.set_gripper_joint_state(left_gripper=0.04, right_gripper=0.04, velocity=velocity)
+
+    def close_gripper(self, velocity=1.0):
+        self.set_gripper_joint_state(left_gripper=0.00125, right_gripper=0.00125, velocity=velocity)
+
     def execute(self, object, action, target , object_1_center, object_2_center):  # TODO: To be implemented, robot needs to repeat what it understood while pointing at objects.
         self.saved_depth_frame = self.depth_frame
 
         self.set_object_tf(object_1_center, self.object_tf)
+        rospy.sleep(0.5)
         self.set_object_tf(object_2_center, self.target_tf)    
-
         rospy.sleep(0.5)
 
         self.set_pointing_tf(self.object_tf, self.object_pointing_tf)
-
-        rospy.sleep(0.5)
+        rospy.sleep(0.75)
 
         self.set_pointing_tf(self.target_tf, self.target_pointing_tf)
-       
         rospy.sleep(0.5)
 
         self.move_arm(self.tf_to_pose(self.object_pointing_tf))
         
         if not self.simulation:
             self.tiago_talk(f"Would you like me to pick {object}")
-        rospy.sleep(2)
+        sleep(2)
         if not self.simulation:
             self.tiago_talk(f"and {action}")
 
@@ -412,7 +473,7 @@ class UnderstandingNode:
 
         if not self.simulation:
             self.tiago_talk(f"at {target}?")
-        rospy.sleep(2)
+        sleep(2)
         
         self.saved_depth_frame = None
         #TODO 1: IMPLEMENT WAITING FOR HUMAN CONFIRMATION 
@@ -421,6 +482,8 @@ class UnderstandingNode:
 
     def run(self):
         # Run the ROS node
+        self.open_gripper(1.0)
+        self.close_gripper(1.0)
         rospy.spin()
 
 
