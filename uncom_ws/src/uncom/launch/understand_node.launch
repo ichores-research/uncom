@@ -8,7 +8,11 @@
   <arg name='output_directory' default='/home/robot/Code/uncom/output2'/>
   <arg name='img_height' default='480'/>
   <arg name='img_width' default='640'/>
-  
+  <arg name='depth_topic' default='/xtion/depth_registered/image_raw'/>
+  <arg name='robot_model' default='krakow'/>
+
+
+
   <!-- Launch node 1 -->
   <param name='temporary_video_filename' type='str' value='$(arg temporary_video_filename)'/>
   <param name='simulation' type='boolean' value='$(arg simulation)'/>
@@ -16,7 +20,9 @@
   <param name='inference_device' type='str' value='$(arg inference_device)'/>
   <param name='output_directory' type='str' value='$(arg output_directory)'/>
   <param name='img_height' type='int' value='$(arg img_height)'/>
-  <param name='img_width' type='int' value='$(arg img_width)'/>
+  <param name='depth_topic' type='str' value='$(arg depth_topic)'/>
+  <param name='robot_model' type='str' value='$(arg robot_model)'/>
+
 
   <node name="understand_node" pkg="uncom" type="understand_ROS.py" output="screen" />
 </launch>

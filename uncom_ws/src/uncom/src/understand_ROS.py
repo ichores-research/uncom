@@ -46,21 +46,18 @@ class UnderstandingNode:
         rospy.init_node('understanding_node')
         self.mqtt_client = mqtt_client
         # Publishers for topics
+        
         self.video_record_pub = rospy.Publisher('/video_recording', Bool, queue_size=10)
         self.audio_record_pub = rospy.Publisher('/audio_recording', Bool, queue_size=10)
         self.vad_status_pub = rospy.Publisher('/perform_vad', Bool, queue_size=10)
 
         self.save_video_pub = rospy.Publisher('/save_video', String, queue_size=10)
         self.save_audio_pub = rospy.Publisher('/save_audio', String, queue_size=10)
-
+    
         self.clear_video_pub = rospy.Publisher('/clear_video', Empty, queue_size=10)
         self.clear_audio_pub = rospy.Publisher('/clear_audio', Empty, queue_size=10)
 
         self.speech_detected_sub = rospy.Subscriber('/speech_detected', Bool, self.speech_detected_callback)
-        
-
-        # Subscribe to registered_depth topic
-        self.depth_sub = rospy.Subscriber('/xtion/depth_registered/image_raw', Image, self.depth_callback)
 
         # Obtain rosparams and assign them to node variables
 
@@ -71,6 +68,14 @@ class UnderstandingNode:
         self.simulation = rospy.get_param("simulation")
         self.img_heigth = rospy.get_param("img_height")
         self.img_width = rospy.get_param("img_width")
+        self.robot_model = rospy.get_param("robot_model")
+        depth_topic = rospy.get_param("depth_topic")
+
+        self.tts_request_pub = rospy.Publisher('/bridge/tts', String, queue_size=10) if self.robot_model!='krakow' else None
+
+
+        # Subscribe to registered_depth topic # default = '/xtion/depth_registered/image_raw'
+        self.depth_sub = rospy.Subscriber(depth_topic, Image, self.depth_callback)
 
         self.speech_detected = False
         self.silence_time = 0
@@ -81,19 +86,34 @@ class UnderstandingNode:
         self.depth_frame = None
         self.saved_depth_frame = self.depth_frame
 
-        self.arm_plan_tf = 'base_footprint'
-        self.depth_camera_tf = 'xtion_rgb_optical_frame'
-        self.shoulder_tf = 'arm_1_link'
+        self.arm_plan_tf = 'base_footprint' if self.robot_model=='krakow' else 'base_link'
+        self.depth_camera_tf = 'xtion_rgb_optical_frame' 
+        self.shoulder_tf = 'arm_1_link' if self.robot_model=='krakow' else 'arm_right_1_link'
 
+        #for controlling Krakow's TIAGo
+        self.robot = None
+        self.scene = None
+        self.group_arm_torso = None
+        self.group_gripper = None
+        
+        #for controlling Prague's TIAGo
+        self.arm_controller = None
+        self.gripper_controller = None
 
-        self.robot = moveit_commander.RobotCommander()
-        self.scene = moveit_commander.PlanningSceneInterface()
-        self.group_arm_torso = moveit_commander.MoveGroupCommander("arm_torso")
+        if self.robot_model == 'krakow':
+            self.robot = moveit_commander.RobotCommander()
+            print("GROUP NAMES: ", self.robot.get_group_names())
+            self.scene = moveit_commander.PlanningSceneInterface()
+            self.group_arm_torso = moveit_commander.MoveGroupCommander("arm_torso") 
 
-        self.group_gripper = moveit_commander.MoveGroupCommander("gripper")
+            self.group_gripper = moveit_commander.MoveGroupCommander("gripper")
 
-        self.group_arm_torso.set_planner_id("SBLkConfigDefault")
-        self.group_arm_torso.set_pose_reference_frame(self.arm_plan_tf)
+            self.group_arm_torso.set_planner_id("SBLkConfigDefault")
+            self.group_arm_torso.set_pose_reference_frame(self.arm_plan_tf)
+
+        else:
+            self.arm_controller = rospy.Publisher('/target_pose', Pose, queue_size=10)
+            self.gripper_controller = rospy.Publisher('/target_gripper', String, queue_size=10)
 
        ## listen to TIAGo's tf tree
         print("Looking for robot part' s location")
@@ -394,16 +414,19 @@ class UnderstandingNode:
         return tts_client
 
     def tiago_talk(self, speech):
-        try:
-            print("Requesting speech action")
-            tts_client = self.tts_connection()
-            goal = TtsGoal()
-            goal.rawtext.text = speech
-            goal.rawtext.lang_id = 'en_GB'
-            tts_client.send_goal_and_wait(goal)
-            print("Finished")
-        except rospy.ROSInterruptException:
-            print("Abruptly finished!")
+        if self.robot_model=='krakow':
+            try:
+                print("Requesting speech action")
+                tts_client = self.tts_connection()
+                goal = TtsGoal()
+                goal.rawtext.text = speech
+                goal.rawtext.lang_id = 'en_GB'
+                tts_client.send_goal_and_wait(goal)
+                print("Finished")
+            except rospy.ROSInterruptException:
+                print("Abruptly finished!")
+        else:
+            self.tts_request_pub.pub(String(data=str(speech)))
 
     def mqtt_understand_request(self):
         file_paths = [str(self.output_dir / self.audio_filename), str(self.output_dir / self.video_filename), 'understand']
@@ -414,38 +437,47 @@ class UnderstandingNode:
         self.mqtt_client.publish("inference/request", json.dumps(str(file_paths)))
 
     def move_arm(self, goal):
-
-        self.group_arm_torso.set_pose_target(goal)
-        self.group_arm_torso.set_planning_time(50.0)
-        self.group_arm_torso.set_start_state_to_current_state()
-        self.group_arm_torso.set_max_velocity_scaling_factor(1.0)
-
-        plan = self.group_arm_torso.plan()
-        if not plan:
-            rospy.logerr("No plan found")
-            return
-
-        start_time = rospy.Time.now()
-        self.group_arm_torso.go(wait=True)
+        if self.robot_model == 'krakow':
+            self.group_arm_torso.set_pose_target(goal)
+            self.group_arm_torso.set_planning_time(50.0)
+            self.group_arm_torso.set_start_state_to_current_state()
+            self.group_arm_torso.set_max_velocity_scaling_factor(1.0)
+            plan = self.group_arm_torso.plan()
+            if not plan:
+                rospy.logerr("No plan found")
+                return
+            self.group_arm_torso.go(wait=True)
+        else: 
+            self.arm_controller.publish(goal)
 
     def set_gripper_joint_state(self, left_gripper, right_gripper, velocity=1.0):
-
-        self.group_gripper.set_start_state_to_current_state()
-        self.group_gripper.set_joint_value_target("gripper_left_finger_joint", left_gripper)
-        self.group_gripper.set_joint_value_target("gripper_right_finger_joint", right_gripper)
-        self.group_gripper.set_planning_time(1.0)        
-        self.group_gripper.set_max_velocity_scaling_factor(velocity)
-        plan = self.group_gripper.plan()
-        if not plan:
-            rospy.logerr("No plan found")
-            return
-        self.group_gripper.go(wait=True)
+        if self.robot_model == 'krakow':
+            self.group_gripper.set_start_state_to_current_state()
+            self.group_gripper.set_joint_value_target("gripper_left_finger_joint", left_gripper)
+            self.group_gripper.set_joint_value_target("gripper_right_finger_joint", right_gripper)
+            self.group_gripper.set_planning_time(1.0)        
+            self.group_gripper.set_max_velocity_scaling_factor(velocity)
+            plan = self.group_gripper.plan()
+            if not plan:
+                rospy.logerr("No plan found")
+                return
+            self.group_gripper.go(wait=True)
+            
+        else:
+            self.gripper_controller.publish(String(data=str(left_gripper)+str(right_gripper)))
 
     def open_gripper(self, velocity=1.0):
-        self.set_gripper_joint_state(left_gripper=0.04, right_gripper=0.04, velocity=velocity)
+        if self.robot_model == 'krakow':
+            self.set_gripper_joint_state(left_gripper=0.04, right_gripper=0.04, velocity=velocity)
+
+        else: 
+            self.set_gripper_joint_state(left_gripper=0, right_gripper=0)
 
     def close_gripper(self, velocity=1.0):
-        self.set_gripper_joint_state(left_gripper=0.00125, right_gripper=0.00125, velocity=velocity)
+        if self.robot_model == 'krakow':
+            self.set_gripper_joint_state(left_gripper=0.00125, right_gripper=0.00125, velocity=velocity)
+        else:
+            self.set_gripper_joint_state(left_gripper=1, right_gripper=1)
 
     def execute(self, object, action, target , object_1_center, object_2_center):  # TODO: To be implemented, robot needs to repeat what it understood while pointing at objects.
         self.saved_depth_frame = self.depth_frame
