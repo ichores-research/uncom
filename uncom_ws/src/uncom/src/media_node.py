@@ -38,11 +38,13 @@ class MediaNode:
 
         self.vad_status_sub = rospy.Subscriber('/perform_vad', Bool, self.perform_vad_callback)
 
-        # Subscribe to image topic
-        self.image_sub = rospy.Subscriber('/xtion/rgb/image_raw', Image, self.image_callback)
+        # Subscribe to image topic #default: /xtion/rgb/image_raw
+        camera_topic = rospy.get_param("camera_topic")
+        self.image_sub = rospy.Subscriber(camera_topic, Image, self.image_callback)
 
-        # Subscribe to audio topic with Int16MultiArray to receive raw audio data
-        self.audio_sub = rospy.Subscriber('/audio_frames', Int16MultiArray, self.audio_callback)
+        # Subscribe to audio topic with Int16MultiArray to receive raw audio data # default /audio_frames
+        audio_topic = rospy.get_param("audio_topic")
+        self.audio_sub = rospy.Subscriber(audio_topic, Int16MultiArray, self.audio_callback)
 
         self.video_save_sub = rospy.Subscriber('/save_video', String, self.save_video)
         self.audio_save_sub = rospy.Subscriber('/save_audio', String, self.save_audio)

@@ -5,11 +5,17 @@
   <arg name='camera_image_width' default='640'/>
   <arg name='camera_image_height' default='320'/>
   <arg name='audio_rate' default='48000'/>
+  <arg name='camera_topic' default='/xtion/rgb/image_raw'/>
+  <arg name='audio_topic' default='/audio_frames'/>
   <!-- Launch node 1 -->
   <param name='vad_aggressiveness' type='int' value='$(arg vad_aggressiveness)'/>
   <param name='camera_fps' type='int' value='$(arg camera_fps)'/>
   <param name='camera_image_width' type='int' value='$(arg camera_image_width)'/>
   <param name='camera_image_height' type='int' value='$(arg camera_image_height)'/>
   <param name='audio_rate' type='int' value='$(arg audio_rate)'/>
+
+  <param name='camera_topic' type='str' value='$(arg camera_topic)'/>
+  <param name='audio_topic' type='str' value='$(arg audio_topic)'/>
+
   <node name="media_node" pkg="uncom" type="media_node.py" output="screen" />
 </launch>
