@@ -1,4 +1,0 @@
-float32 left_gripper
-float32 right_gripper
----
-bool result
