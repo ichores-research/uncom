@@ -11,7 +11,7 @@ bondpy
 Bottleneck==1.4.2
 Brotli==1.1.0
 cachetools==5.5.2
-camera-calibration
+#camera-calibration
 certifi==2025.1.31
 cffi==1.17.1
 chardet==5.2.0
@@ -25,7 +25,7 @@ cubinlinker-cu11==0.3.0.post2
 cuda-bindings==11.8.6
 cuda-python==11.8.6
 cudf-cu11==24.8.3
-cuml-cu11==24.8.0
+#cuml-cu11==24.8.0
 cupy-cuda11x==13.4.0
 cv-bridge
 cycler==0.12.1
@@ -61,8 +61,8 @@ importlib_resources==6.5.2
 intel-cmplr-lib-ur==2025.0.5
 intel-openmp==2025.0.5
 iopath==0.1.10
-jax==0.4.30
-jaxlib==0.4.30
+#jax==0.4.30
+#jaxlib==0.4.30
 Jinja2==3.1.6
 joblib
 kiwisolver

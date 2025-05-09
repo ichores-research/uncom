@@ -200,15 +200,15 @@ def check_relative_position(text):
 
 
 def check_agreement(transcription):
-    model = AutoModelForCausalLM.from_pretrained( #"microsoft/Phi-3-mini-4k-instruct",
-                                                 "microsoft/Phi-4-mini-instruct",
+    model = AutoModelForCausalLM.from_pretrained( "microsoft/Phi-3-mini-4k-instruct",
+                         #                        "microsoft/Phi-4-mini-instruct",
                                                  trust_remote_code=True,
                                                  device_map=device,
                                                  torch_dtype=torch_dtype,
                                                 )
 
-    #tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
-    tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-4-mini-instruct")
+    tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
+    #tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-4-mini-instruct")
     
     pipe = pipeline("text-generation",
                     model=model,

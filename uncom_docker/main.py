@@ -29,7 +29,7 @@ from uncom_utils.image import (
     DetectionResult,
     BoundingBox,
     DepthEstimator,
-    SimilarityCalculator,
+    # SimilarityCalculator,
     annotate_action,
     annotate_image,
     extract_frame,
@@ -488,7 +488,8 @@ def understand(audio_path, video_path, device="auto"):
         return ["ambiguous"]
 
 def on_message(client, userdata, message):
-    file_paths = literal_eval(json.loads(message.payload.decode("utf-8")))
+    #file_paths = literal_eval(json.loads(message.payload.decode("utf-8")))
+    file_paths = json.loads(message.payload.decode("utf-8"))
     audio_path = file_paths[0]
     video_path = file_paths[1]
     inference = file_paths[2]

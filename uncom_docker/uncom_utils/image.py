@@ -507,22 +507,22 @@ class CenterPadding(torch.nn.Module):
         output = F.pad(x, pads)
         return output
 
-class SimilarityCalculator:
-    def __init__(self):
-        self.device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
-        self.processor = AutoImageProcessor.from_pretrained('facebook/dinov2-small')
-        self.model = AutoModel.from_pretrained('facebook/dinov2-small').to(self.device)
-        self.index = faiss.IndexFlatL2(384)
-    
-    def add_vector_to_index(self, embedding):
-        #convert embedding to numpy
-        vector = embedding.detach().cpu().numpy()
-        #Convert to float32 numpy
-        vector = np.float32(vector)
-        #Normalize vector: important to avoid wrong results when searching
-        faiss.normalize_L2(vector)
-        #Add to index
-        self.index.add(vector)
+    class SimilarityCalculator:
+        def __init__(self):
+            self.device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
+            self.processor = AutoImageProcessor.from_pretrained('facebook/dinov2-small')
+            self.model = AutoModel.from_pretrained('facebook/dinov2-small').to(self.device)
+            self.index = faiss.IndexFlatL2(384)
+
+        def add_vector_to_index(self, embedding):
+            #convert embedding to numpy
+            vector = embedding.detach().cpu().numpy()
+            #Convert to float32 numpy
+            vector = np.float32(vector)
+            #Normalize vector: important to avoid wrong results when searching
+            faiss.normalize_L2(vector)
+            #Add to index
+            self.index.add(vector)
 
     def generate_faiss_index(self, image, object_list):
         bbox_list = []
