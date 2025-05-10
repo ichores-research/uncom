@@ -49,6 +49,9 @@ import json
 from ast import literal_eval
 
 def check_agree(audio_path, device='auto'):
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    torch_dtype = torch.float32 if device == "cpu" else "auto"
     transcriber = AudioTranscriber(device=device, torch_dtype=torch_dtype)
     transcription = transcriber.transcribe(str(audio_path))
     return check_agreement(transcription['text'])
@@ -109,11 +112,12 @@ def understand(audio_path, video_path, device="auto"):
 
     command = command_extractor.extract(transcription)
     
-    if len(command.object)>1:
-        multiple_objects = True
-    else:
-        command.object = command.object[0]
-        
+    if isinstance(command.object, list):
+        if len(command.object)>1:
+            multiple_objects = True
+        else:
+            command.object = command.object[0]
+
     print("Command:", command)
     command_path = output_dir / "command.json"
     command.save(command_path)

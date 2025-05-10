@@ -18,8 +18,13 @@ class MediaNode:
         # Initialize the ROS Node
         rospy.init_node('media_node', anonymous=True)
 
+        
+        self.sample_rate = rospy.get_param("audio_rate")
+        self.robot_model = rospy.get_param("robot_model")
+        ## voice activity detector 
+        self.vad = webrtcvad.Vad()
+        
         # Class variables to store recording status and output directory
-
         self.video_record = False  # Video recording statushelp fleshing out the backstory for this clan's arrival in Brazil?
         self.audio_record = False  # Audio recording status
         self.output_dir = Path()  # Output directory as a Path object
@@ -56,15 +61,12 @@ class MediaNode:
         self.speech_detected_pub = rospy.Publisher('/speech_detected', Bool, queue_size=10)
 
 
-        ## voice activity detector 
-        self.vad = webrtcvad.Vad()
-
 
         #ROS parameters used by the node.
 
         self.framerate = rospy.get_param("camera_fps")
         self.dim = (rospy.get_param("camera_image_width"), rospy.get_param("camera_image_height"))
-        self.sample_rate = rospy.get_param("audio_rate")
+        
         self.vad.set_mode(rospy.get_param("vad_aggressiveness")) # agressiveness from 1-9
 
     def video_recording_callback(self, msg):
@@ -82,7 +84,6 @@ class MediaNode:
         """
         self.audio_record = msg.data
         rospy.loginfo(f"Audio recording status updated: {self.audio_record}")
-
 
     def perform_vad_callback(self, msg):
         """
@@ -104,6 +105,7 @@ class MediaNode:
             # rospy.loginfo("Received Image!")
             # If video recording is active, call the video_stream method
             if self.video_record:
+                #self.video_frames.put((msg.header.stamp.to_sec(), cv_image))
                 self.video_frames.put(cv_image)
         except CvBridgeError as e:
             rospy.logerr("Error converting image: %s", str(e))
@@ -152,20 +154,22 @@ class MediaNode:
             out.write(frame)
         out.release()
 
-
     def save_audio(self, msg):
         # Concatenate the audio frames into one array
         try: 
             path = msg.data
             audio = np.concatenate(list(self.audio_frames.queue))
             # Save the audio as a WAV file
-            wavfile.write(path, self.sample_rate, audio)
+            multiplier = 1 if self.robot_model=='krakow' else 2
+            wavfile.write(path, multiplier*self.sample_rate, audio)
             rospy.loginfo(f"Audio saved to {path}")
         except Exception as e: 
             rospy.logerr(f"Audio saving failed due to {e}")
             
     def detect_speech(self):
-        if not self.vad_status: return False
+        if not self.vad_status: 
+            self.audio_buffer = Queue()
+            return False
         frame_duration = 10  # Frame duration in milliseconds
         frame_size = int(self.sample_rate * frame_duration / 1000)  # Frame size in samples
         frames = list(self.audio_buffer.queue)

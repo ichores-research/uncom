@@ -7,6 +7,8 @@
   <arg name='audio_rate' default='48000'/>
   <arg name='camera_topic' default='/xtion/rgb/image_raw'/>
   <arg name='audio_topic' default='/audio_frames'/>
+  <arg name='robot_model' default='krakow'/>
+  
   <!-- Launch node 1 -->
   <param name='vad_aggressiveness' type='int' value='$(arg vad_aggressiveness)'/>
   <param name='camera_fps' type='int' value='$(arg camera_fps)'/>
@@ -16,6 +18,7 @@
 
   <param name='camera_topic' type='str' value='$(arg camera_topic)'/>
   <param name='audio_topic' type='str' value='$(arg audio_topic)'/>
-
+  <param name='robot_model' type='str' value='$(arg robot_model)'/>
+  
   <node name="media_node" pkg="uncom" type="media_node.py" output="screen" />
 </launch>

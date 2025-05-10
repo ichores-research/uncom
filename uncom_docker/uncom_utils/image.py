@@ -346,6 +346,9 @@ def annotate_image(
             color.tolist(),
             4,
         )
+        
+        if not isinstance(pointing_vec, np.ndarray):
+            pointing_vec = np.array(pointing_vec)
 
         # If mask is available, apply it
         if mask is not None:

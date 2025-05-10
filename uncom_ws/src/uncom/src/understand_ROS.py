@@ -57,6 +57,7 @@ class UnderstandingNode:
         self.clear_video_pub = rospy.Publisher('/clear_video', Empty, queue_size=10)
         self.clear_audio_pub = rospy.Publisher('/clear_audio', Empty, queue_size=10)
 
+        self.speech_detected = False
         self.speech_detected_sub = rospy.Subscriber('/speech_detected', Bool, self.speech_detected_callback)
 
         # Obtain rosparams and assign them to node variables
@@ -72,12 +73,13 @@ class UnderstandingNode:
         depth_topic = rospy.get_param("depth_topic")
 
         self.tts_request_pub = rospy.Publisher('/bridge/tts', String, queue_size=10) if self.robot_model!='krakow' else None
+        self.arm_joint_request = rospy.Publisher('/set_joints', String, queue_size=10)
 
 
         # Subscribe to registered_depth topic # default = '/xtion/depth_registered/image_raw'
         self.depth_sub = rospy.Subscriber(depth_topic, Image, self.depth_callback)
 
-        self.speech_detected = False
+        
         self.silence_time = 0
         self.max_silence = 500  
         self.wait_confirmation = False
@@ -86,7 +88,7 @@ class UnderstandingNode:
         self.depth_frame = None
         self.saved_depth_frame = self.depth_frame
 
-        self.arm_plan_tf = 'base_footprint' if self.robot_model=='krakow' else 'base_link'
+        self.arm_plan_tf = 'base_footprint' #if self.robot_model=='krakow' else 'base_link'
         self.depth_camera_tf = 'xtion_rgb_optical_frame' 
         self.shoulder_tf = 'arm_1_link' if self.robot_model=='krakow' else 'arm_right_1_link'
 
@@ -116,21 +118,10 @@ class UnderstandingNode:
             self.gripper_controller = rospy.Publisher('/target_gripper', String, queue_size=10)
 
        ## listen to TIAGo's tf tree
-        print("Looking for robot part' s location")
         self.tf_listener = tf.TransformListener()
-        # waits to see if a transform is possible
-        print ("Can we find a tranform between the base and the camera?")
-
 
         self.tf_listener.waitForTransform(self.arm_plan_tf, self.depth_camera_tf, rospy.Time(), rospy.Duration(5.0))
         self.tf_listener.waitForTransform(self.arm_plan_tf, self.shoulder_tf, rospy.Time(), rospy.Duration(5.0))
-        
-        # obtains the transform betwee TIAGo's base and the depth camera frames
-        self.head_base_trans, self.head_base_rot = self.tf_listener.lookupTransform( self.arm_plan_tf, self.depth_camera_tf, rospy.Time(0))
-        print (f"Found the head-base transform! It is {str(self.head_base_trans)}, {str(self.head_base_rot)}")
-
-        self.base_arm_trans, _ = self.tf_listener.lookupTransform(self.arm_plan_tf, self.shoulder_tf, rospy.Time(0))
-        print (f"Found the base-arm transform! It is {str(self.base_arm_trans)}")
 
         self.transform_broadcaster = tf2_ros.TransformBroadcaster()
 
@@ -179,17 +170,22 @@ class UnderstandingNode:
                 if self.silence_time >= self.max_silence:
                     self.speech_detected = False
                     self.silence_time = 0
-                    self.publish_video_recording(False)
                     self.publish_audio_recording(False)
+                    self.publish_video_recording(False)
+                    rospy.sleep(0.5)
                     self.publish_save_video(str(self.output_dir / self.video_filename))
                     self.publish_save_audio(str(self.output_dir / self.audio_filename))
                     global understood
 
                     if not self.wait_confirmation:
                         understood = []
+                        print("SENDING UNDERSTAND REQUEST!")
                         self.mqtt_understand_request()
+                        print("REQUEST SENT!")
                         t0 = time()
                         timeout = 100
+                        self.publish_vad_status(False)
+                        
                         while not understood: 
                             # print("Thinking", (time()-t0),"%")
                             if time()-t0>timeout:
@@ -198,25 +194,31 @@ class UnderstandingNode:
                                 break 
 
                         if understood[0] == "OK":
+                            self.publish_vad_status(False)    
                             self.publish_clear_video()
-                            self.publish_clear_audio()
-                            self.publish_vad_status(False)
-                            self.execute(understood[1], understood[2], understood[3], understood[4], understood[5],)
+                            self.publish_clear_audio() 
+                            self.point_and_ask(understood[1], understood[2], understood[3], understood[4], understood[5],)
+                            rospy.sleep(2.0)
                             self.publish_vad_status(True)
                             self.wait_confirmation = True
 
                         elif understood[0] == "ambiguous":
+                            self.publish_vad_status(False)
                             self.publish_clear_video()
                             self.publish_clear_audio()
                             self.publish_video_recording(False)
                             self.publish_audio_recording(False)
                             self.silence_time = 0 
                             self.speech_detected = False
-                            self.publish_vad_status(False)
                             self.request_repeat()
+                            rospy.sleep(6.0)
                             self.publish_vad_status(True)
 
                         elif understood[0] == "incomplete": # Command is still incomplete, immediately resume recording video and audio
+                            self.publish_vad_status(False)
+                            self.request_continue()
+                            rospy.sleep(2.0)
+                            self.publish_vad_status(True)
                             self.publish_video_recording(True)
                             self.publish_audio_recording(True)
                             self.silence_time = 0 
@@ -240,16 +242,23 @@ class UnderstandingNode:
                         self.silence_time = 0 
                         self.speech_detected = False
                         self.publish_vad_status(False)
-                        self.publish_vad_status(True)
                         self.wait_confirmation = False
                         
                         if understood[0]:
-                            # TODO: Implement pick & place
-                            print ("MOCK EXECUTION OF PICK & PLACE TASK")
+                            self.execute_pick_place()
                         else:
+                            self.publish_vad_status(False)
                             self.request_repeat()
+                            rospy.sleep(6.0)
                             print ("CANCEL TASK")
+                        self.publish_vad_status(True)
 
+    def go_home(self):
+        self.joint_command("left",[0.1499477988896708, -1.0999970646935833, 1.4678949728052277, 2.7139684702563316, 1.7095026751384435, -1.5709468137969365, 1.3898194804244532, 0.00013088278376799378])
+        self.joint_command("right",[0.1499477988896708, -1.0999153649440856, 1.468119695531148, 2.713946763172928, 1.7095291050241606, -1.5706577118487064, 1.3897482611250676, -0.00016294827082547966])
+
+    def joint_command(self, arm, command):
+        self.arm_joint_request.publish(String(data=str([arm]+command)))
 
     def depth_callback(self, msg):
         """
@@ -261,24 +270,29 @@ class UnderstandingNode:
         except CvBridgeError as e:
             rospy.logerr("Error reading the depth frame: %s", str(e))
             self.depth_frame = None
+            
+    def change_parent(self, input_tf, new_parent):
+        try:
+            # Get the transform from the new parent to the child frame
+            (trans, rot) = self.tf_listener.lookupTransform(new_parent, input_tf.child_frame_id, rospy.Time(0))
+        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+            rospy.logerr("Failed to lookup transform from new parent to child.")
+            return None
 
-    def transform_point_cloud(self, point_cloud):
-        # Create a transformation matrix from the translation and rotation
-
-        # obtains the transform betwee TIAGo's base and the depth camera frames
-
-        transform_matrix = tf.transformations.quaternion_matrix(self.head_base_rot)
-        transform_matrix[0:3, 3] = self.head_base_trans
-        transformed_points = []
-        print("POINT CLOUD: ", point_cloud)
-        for point in point_cloud:
-            # Convert point to homogeneous coordinates
-            point_homogeneous = np.array([point[0], point[1], point[2], 1.0])
-            # Apply the transformation
-            transformed_point = np.dot(transform_matrix, point_homogeneous)
-            transformed_points = transformed_point[:3]
-
-        return transformed_points
+        # Create a new TransformStamped with the new parent as the frame_id
+        new_tf = TransformStamped()
+        new_tf.header.stamp = rospy.Time.now()
+        new_tf.header.frame_id = new_parent
+        new_tf.child_frame_id = input_tf.child_frame_id
+        new_tf.transform.translation.x = trans[0]
+        new_tf.transform.translation.y = trans[1]
+        new_tf.transform.translation.z = trans[2]
+        new_tf.transform.rotation.x = rot[0]
+        new_tf.transform.rotation.y = rot[1]
+        new_tf.transform.rotation.z = rot[2]
+        new_tf.transform.rotation.w = rot[3]
+        
+        return new_tf
 
     def set_object_tf(self, center, input_tf):
         x, y = center
@@ -328,7 +342,7 @@ class UnderstandingNode:
             # pointing_tf.transform.translation.z = shoulder_to_base_tf[2] + .75 * (object_to_base_tf[2]-input_tf.transform.translation.y  - shoulder_to_base_tf[2])
 
             pointing_tf.transform.translation.x = shoulder_to_base_tf[0] + .5 * (object_to_base_tf[0]  - shoulder_to_base_tf[0])
-            pointing_tf.transform.translation.y = shoulder_to_base_tf[1] + .5 * (object_to_base_tf[1]  - shoulder_to_base_tf[1])
+            pointing_tf.transform.translation.y = shoulder_to_base_tf[1] + .95 * (object_to_base_tf[1]  - shoulder_to_base_tf[1])
             pointing_tf.transform.translation.z = shoulder_to_base_tf[2] + .5 * (object_to_base_tf[2]  - shoulder_to_base_tf[2])
 
 
@@ -401,6 +415,9 @@ class UnderstandingNode:
         """
         self.clear_video_pub.publish(Empty())
 
+    def request_continue(self):
+        self.tiago_talk("Please, go on.")
+
     def request_repeat(self):
         self.publish_clear_audio()
         self.publish_clear_video()
@@ -426,15 +443,15 @@ class UnderstandingNode:
             except rospy.ROSInterruptException:
                 print("Abruptly finished!")
         else:
-            self.tts_request_pub.pub(String(data=str(speech)))
+            self.tts_request_pub.publish(String(data=str(speech)))
 
     def mqtt_understand_request(self):
         file_paths = [str(self.output_dir / self.audio_filename), str(self.output_dir / self.video_filename), 'understand']
-        self.mqtt_client.publish("inference/request", json.dumps(str(file_paths)))
+        self.mqtt_client.publish("inference/request", json.dumps(file_paths))
 
     def mqtt_agree_request(self):
         file_paths = [str(self.output_dir / self.audio_filename), str(self.output_dir / self.video_filename), 'check_agree']
-        self.mqtt_client.publish("inference/request", json.dumps(str(file_paths)))
+        self.mqtt_client.publish("inference/request", json.dumps(file_paths))
 
     def move_arm(self, goal):
         if self.robot_model == 'krakow':
@@ -479,13 +496,15 @@ class UnderstandingNode:
         else:
             self.set_gripper_joint_state(left_gripper=1, right_gripper=1)
 
-    def execute(self, object, action, target , object_1_center, object_2_center):  # TODO: To be implemented, robot needs to repeat what it understood while pointing at objects.
+    def point_and_ask(self, object, action, target , object_1_center, object_2_center):  # TODO: To be implemented, robot needs to repeat what it understood while pointing at objects.
         self.saved_depth_frame = self.depth_frame
 
         self.set_object_tf(object_1_center, self.object_tf)
         rospy.sleep(0.5)
         self.set_object_tf(object_2_center, self.target_tf)    
         rospy.sleep(0.5)
+        self.object_tf = self.change_parent(self.object_tf, self.arm_plan_tf)
+        self.target_tf = self.change_parent(self.target_tf, self.arm_plan_tf)
 
         self.set_pointing_tf(self.object_tf, self.object_pointing_tf)
         rospy.sleep(0.75)
@@ -493,18 +512,26 @@ class UnderstandingNode:
         self.set_pointing_tf(self.target_tf, self.target_pointing_tf)
         rospy.sleep(0.5)
 
+        if not self.simulation:
+            self.tiago_talk(f"Would you like me to {action}")
+        
+        rospy.sleep(2.0)
+        
         self.move_arm(self.tf_to_pose(self.object_pointing_tf))
+        if self.robot_model!="krakow":
+            rospy.sleep(6.0)
         
         if not self.simulation:
-            self.tiago_talk(f"Would you like me to pick {object}")
-        sleep(2)
-        if not self.simulation:
-            self.tiago_talk(f"and {action}")
+            self.tiago_talk(f" this {object}")
+        rospy.sleep(.5)
 
         self.move_arm(self.tf_to_pose(self.target_pointing_tf))
 
+        if self.robot_model!="krakow":
+            rospy.sleep(6.0)
+
         if not self.simulation:
-            self.tiago_talk(f"at {target}?")
+            self.tiago_talk(f"at this {target}?")
         sleep(2)
         
         self.saved_depth_frame = None
@@ -512,10 +539,27 @@ class UnderstandingNode:
         
         #TODO 2: IMPLEMENT ACTUAL TASK EXECUTION 
 
+    def execute_pick_place(self):
+        self.go_home()
+        rospy.sleep(10)
+        self.open_gripper(1.0)
+        self.object_tf.transform.translation.z+=0.15
+        self.target_tf.transform.translation.z+=0.15
+        rospy.sleep(2.0)
+        pick_pose = self.tf_to_pose(self.object_tf)
+        self.move_arm(pick_pose)
+        if  self.robot_model!='krakow':
+            rospy.sleep(7.0)
+        self.close_gripper(1.0)
+        rospy.sleep(1.0)
+        drop_pose = self.tf_to_pose(self.target_tf)
+        self.move_arm(drop_pose)
+        if  self.robot_model!='krakow':
+            rospy.sleep(7.0)
+        self.open_gripper(1.0)
+
     def run(self):
         # Run the ROS node
-        self.open_gripper(1.0)
-        self.close_gripper(1.0)
         rospy.spin()
 
 
@@ -525,5 +569,6 @@ if __name__ == '__main__':
     client_thread.start()
 
     node = UnderstandingNode()
+    node.go_home()
     node.run()
 
