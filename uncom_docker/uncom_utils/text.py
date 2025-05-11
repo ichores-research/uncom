@@ -10,9 +10,9 @@ import chardet
 # PROMPT = 'User will provide you a transcription JSON from Whisper. Extract from it the object (noun + adjectives), the action (verb or phrase), and the target (noun + adjective). If the target has a description of "next to", "between", "near", etc; it should be included in the target description. If the action is a phrasal verb, put it whole. Return the result as JSON with the keys "object", "action", and "target". If you can\'t find any of these, leave the value empty. Be as concise as possible. Example: {"object": {"text": "red mug", "timestamp": [1.04, 1.36]}, "action": {"text": "put on top", "timestamp": [1.5, 1.76]}, "target": {"text": "laptop", "timestamp": [2.24, 2.46]}}. Choose only one interpretation and write just one valid JSON object.'
 
 PROMPT = """You will receive a Whisper transcription JSON. Extract exactly one clear instance of:
-- an object (noun + optional adjectives),
+- an object (noun + optional adjectives) or a reference to one, like " this", "that", "it";
 - an action (verb or phrasal verb),
-- a target (noun + optional adjectives, including any positional descriptors like "next to", "between", "near", etc.).
+- a target (noun + optional adjectives, including any positional descriptors like "next to", "between", "near", etc.), or a reference to a target, like "this", "here" or "there".
 
 Return a single JSON object with the keys: "object", "action", and "target". Each key should contain a "text" string and a "timestamp" array from the original transcription. If any element is missing or unclear, leave its value empty.
 
@@ -23,8 +23,12 @@ Follow this example strictly:
 Output only the valid formatted JSON structure. No extra text or formatting.
  """
 
-PROMPT2 = 'Refine your own output to include information whether the object and the target are concrete objects like "apple" or not concrete like "here". Add appropriate "concrete" flag to your generated JSON.'
+PROMPT2 = """ Refine your own output to include information whether the object and the target are concrete, specific entities (e.g., "apple", "chair") or a non-concrete reference such as "this", "that", "it".
 
+Add a field "concrete": true if the object/target is a specific, tangible noun, and "concrete": false if it is a vague or referential term like "this".
+
+Ensure that pronouns without a clearly identifiable object are marked as "concrete": false.
+"""
 # PROMPT_QUANTITY = """Refine your own output, enriching the "object" list by adding a `"quantity"` field to each item.
 
 # Instructions:
@@ -40,11 +44,11 @@ PROMPT2 = 'Refine your own output to include information whether the object and 
 
 PROMPT3 = """Determine whether the input text contains a complete command that includes:
 
-        1. A single object to be picked up;
+        1. A single object to be picked up (or a reference to an object, like "this" or "that");
 
         2. An action to be performed with that object;
 
-        3. A destination where the action should occur.
+        3. A destination where the action should occur (or a reference to the location, like "here", "there, "over there", etc).
 
     Note: The object and destination may be referred to using pronouns or deictic terms like "this", "that", or "here".
 
@@ -223,7 +227,7 @@ def check_agreement(transcription, device="cuda", torch_dtype="auto"):
                    )
 
     messages = [
-        {"role": "system", "content": "Does the following phrase contain agreement, consent or Authorization? Answer only with 'True' or 'False' "},
+        {"role": "system", "content": "Does the following phrase contain agreement, consent or Authorization? Answer only with '1' if true, '0' otherwise, nothing else."},
         {"role": "user", "content": str(transcription)},
     ]
     output = pipe(

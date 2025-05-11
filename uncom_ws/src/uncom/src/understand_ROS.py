@@ -11,9 +11,8 @@ import paho.mqtt.client as mqtt
 from threading import Thread
 from time import time, sleep
 import tf 
-from geometry_msgs.msg import PoseStamped, Pose, TransformStamped
-from sensor_msgs.msg import CameraInfo
-from sensor_msgs.msg import Image
+from geometry_msgs.msg import PoseStamped, Pose, TransformStamped, Twist
+from sensor_msgs.msg import CameraInfo, Image, JointState
 from ast import literal_eval
 import moveit_commander
 import tf2_ros
@@ -26,7 +25,7 @@ def on_message(client, userdata, message):
     try:
         understood = literal_eval(literal_eval(message.payload.decode("utf-8")))
     except Exception as e: 
-        print(f"Failed to understand due to: {e}")
+        rospy.logerr(f"Failed to understand due to: {e}")
         understood = []
 
 
@@ -57,6 +56,9 @@ class UnderstandingNode:
         self.clear_video_pub = rospy.Publisher('/clear_video', Empty, queue_size=10)
         self.clear_audio_pub = rospy.Publisher('/clear_audio', Empty, queue_size=10)
 
+        self.set_obst_detect_mode = rospy.Publisher('/bridge/set_obstacle_detection_mode', Bool, queue_size=10)
+        self.set_arm_pub = rospy.Publisher('/bridge/select_arm', String, queue_size=10)
+
         self.speech_detected = False
         self.speech_detected_sub = rospy.Subscriber('/speech_detected', Bool, self.speech_detected_callback)
 
@@ -74,11 +76,13 @@ class UnderstandingNode:
 
         self.tts_request_pub = rospy.Publisher('/bridge/tts', String, queue_size=10) if self.robot_model!='krakow' else None
         self.arm_joint_request = rospy.Publisher('/set_joints', String, queue_size=10)
+        self.move_base_pub = rospy.Publisher('/mobile_base_controller/cmd_vel', Twist, queue_size=10)
 
+        self.joint_states = []
 
         # Subscribe to registered_depth topic # default = '/xtion/depth_registered/image_raw'
         self.depth_sub = rospy.Subscriber(depth_topic, Image, self.depth_callback)
-
+        self.joint_state_sub = rospy.Subscriber("/joint_states", JointState, self.joint_states_callback)
         
         self.silence_time = 0
         self.max_silence = 500  
@@ -88,7 +92,7 @@ class UnderstandingNode:
         self.depth_frame = None
         self.saved_depth_frame = self.depth_frame
 
-        self.arm_plan_tf = 'base_footprint' #if self.robot_model=='krakow' else 'base_link'
+        self.arm_plan_tf = 'base_footprint' if self.robot_model=='krakow' else 'base_link'
         self.depth_camera_tf = 'xtion_rgb_optical_frame' 
         self.shoulder_tf = 'arm_1_link' if self.robot_model=='krakow' else 'arm_right_1_link'
 
@@ -104,7 +108,6 @@ class UnderstandingNode:
 
         if self.robot_model == 'krakow':
             self.robot = moveit_commander.RobotCommander()
-            print("GROUP NAMES: ", self.robot.get_group_names())
             self.scene = moveit_commander.PlanningSceneInterface()
             self.group_arm_torso = moveit_commander.MoveGroupCommander("arm_torso") 
 
@@ -156,6 +159,9 @@ class UnderstandingNode:
                 transf.header.stamp = rospy.Time.now()
                 self.transform_broadcaster.sendTransform(transf)
 
+    def joint_states_callback(self, msg):
+        self.joint_states = msg.position
+
     def speech_detected_callback(self, msg):
         detection_status = msg.data
         if detection_status:
@@ -179,9 +185,9 @@ class UnderstandingNode:
 
                     if not self.wait_confirmation:
                         understood = []
-                        print("SENDING UNDERSTAND REQUEST!")
+                        rospy.loginfo("SENDING UNDERSTAND REQUEST!")
                         self.mqtt_understand_request()
-                        print("REQUEST SENT!")
+                        rospy.loginfo("REQUEST SENT!")
                         t0 = time()
                         timeout = 100
                         self.publish_vad_status(False)
@@ -189,7 +195,7 @@ class UnderstandingNode:
                         while not understood: 
                             # print("Thinking", (time()-t0),"%")
                             if time()-t0>timeout:
-                                print("Timeout error, thinking took too long!")
+                                rospy.loginfo("Timeout, thinking took too long!")
                                 understood = ["ambiguous"]
                                 break 
 
@@ -229,7 +235,7 @@ class UnderstandingNode:
                             self.publish_audio_recording(False)
                             self.silence_time = 0 
                             self.speech_detected = False
-                            print("Error, unnexpected result for the understanding operation.")
+                            rospy.logerr("Error, unnexpected result for the understanding operation.")
                     else:
                         understood = []
                         self.mqtt_agree_request()
@@ -244,21 +250,60 @@ class UnderstandingNode:
                         self.publish_vad_status(False)
                         self.wait_confirmation = False
                         
-                        if understood[0]:
-                            self.execute_pick_place()
+                        if bool(understood[0]):
+                            self.publish_vad_status(False)
+                            self.tiago_talk("OK, I will start!")
+                            # self.execute_pick_place() # TODO: FINISH CORRECTING PICK & PLACE
+                            rospy.sleep(3.0)
+                            self.publish_vad_status(True)
+                            
                         else:
                             self.publish_vad_status(False)
                             self.request_repeat()
                             rospy.sleep(6.0)
-                            print ("CANCEL TASK")
+                            rospy.loginfo ("CANCEL TASK")
                         self.publish_vad_status(True)
 
     def go_home(self):
-        self.joint_command("left",[0.1499477988896708, -1.0999970646935833, 1.4678949728052277, 2.7139684702563316, 1.7095026751384435, -1.5709468137969365, 1.3898194804244532, 0.00013088278376799378])
-        self.joint_command("right",[0.1499477988896708, -1.0999153649440856, 1.468119695531148, 2.713946763172928, 1.7095291050241606, -1.5706577118487064, 1.3897482611250676, -0.00016294827082547966])
+        self.joint_command({"torso_lift_joint": 0.1499477988896708, 
+                            "arm_left_1_joint":-1.0999970646935833, 
+                            "arm_left_2_joint":1.4678949728052277,
+                            "arm_left_3_joint":2.7139684702563316, 
+                            "arm_left_4_joint":1.7095026751384435, 
+                            "arm_left_5_joint":-1.5709468137969365,
+                            "arm_left_6_joint":1.3898194804244532, 
+                            "arm_left_7_joint":0.00013088278376799378}) 
+        
+        self.joint_command({"arm_right_1_joint":-1.0999153649440856,
+                            "arm_right_2_joint":1.468119695531148, 
+                            "arm_right_3_joint":2.713946763172928, 
+                            "arm_right_4_joint":1.7095291050241606,
+                            "arm_right_5_joint":-1.5706577118487064, 
+                            "arm_right_6_joint":1.3897482611250676, 
+                            "arm_right_7_joint":-0.00016294827082547966}) 
 
-    def joint_command(self, arm, command):
-        self.arm_joint_request.publish(String(data=str([arm]+command)))
+    def go_top_grasp(self):
+        self.joint_command({"torso_lift_joint": 0.3,
+                            "arm_left_1_joint":-1.0999970646935833, 
+                            "arm_left_2_joint":1.4678949728052277,
+                            "arm_left_3_joint":2.7139684702563316, 
+                            "arm_left_4_joint":1.7095026751384435, 
+                            "arm_left_5_joint":-1.5709468137969365,
+                            "arm_left_6_joint":1.3898194804244532, 
+                            "arm_left_7_joint":0.00013088278376799378}) 
+        
+        self.joint_command({"torso_lift_joint":0.3,
+                            "arm_right_1_joint":0.11809687638497293, 
+                            "arm_right_2_joint":-0.9500183338909938, 
+                            "arm_right_3_joint":1.3132196466348618, 
+                            "arm_right_4_joint":1.4600851804356563, 
+                            "arm_right_5_joint":-2.071999018919099, 
+                            "arm_right_6_joint":0.042998151819657195, 
+                            "arm_right_7_joint":0.38959791372275704}) 
+
+
+    def joint_command(self, command):
+        self.arm_joint_request.publish(String(data=str(command)))
 
     def depth_callback(self, msg):
         """
@@ -333,9 +378,6 @@ class UnderstandingNode:
             object_to_base_tf, object_to_base_rot = self.tf_listener.lookupTransform(self.arm_plan_tf, input_tf.child_frame_id, rospy.Time(0)) 
             shoulder_to_base_tf, shoulder_to_base_rot = self.tf_listener.lookupTransform(self.arm_plan_tf, self.shoulder_tf, rospy.Time(0))
 
-            print("OBJ ROT: ", object_to_base_rot)
-            print("SHOULDER ROT: ", shoulder_to_base_rot)
-
             # Calculate the point 3/4 of the way between the shoulder and the input transform
             # pointing_tf.transform.translation.x = shoulder_to_base_tf[0] + .75 * (object_to_base_tf[0]+input_tf.transform.translation.z   - shoulder_to_base_tf[0])
             # pointing_tf.transform.translation.y = shoulder_to_base_tf[1] + .75 * (object_to_base_tf[1]-input_tf.transform.translation.x  - shoulder_to_base_tf[1])
@@ -345,11 +387,6 @@ class UnderstandingNode:
             pointing_tf.transform.translation.y = shoulder_to_base_tf[1] + .95 * (object_to_base_tf[1]  - shoulder_to_base_tf[1])
             pointing_tf.transform.translation.z = shoulder_to_base_tf[2] + .5 * (object_to_base_tf[2]  - shoulder_to_base_tf[2])
 
-
-            print("CHILD FRAME ID: ", input_tf.child_frame_id)
-            print("OBJECT TO BASE: ", object_to_base_tf)
-            print("SHOULDER TO BASE: ", shoulder_to_base_tf)
-            print("POINTING TF: ", pointing_tf)
         except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as e:
             rospy.logerr(f"Error in lookupTransform: {e}")
 
@@ -433,15 +470,15 @@ class UnderstandingNode:
     def tiago_talk(self, speech):
         if self.robot_model=='krakow':
             try:
-                print("Requesting speech action")
+                rospy.loginfo("Requesting speech action")
                 tts_client = self.tts_connection()
                 goal = TtsGoal()
                 goal.rawtext.text = speech
                 goal.rawtext.lang_id = 'en_GB'
                 tts_client.send_goal_and_wait(goal)
-                print("Finished")
+                rospy.loginfo("Finished")
             except rospy.ROSInterruptException:
-                print("Abruptly finished!")
+                rospy.logerr("Abruptly finished!")
         else:
             self.tts_request_pub.publish(String(data=str(speech)))
 
@@ -452,6 +489,18 @@ class UnderstandingNode:
     def mqtt_agree_request(self):
         file_paths = [str(self.output_dir / self.audio_filename), str(self.output_dir / self.video_filename), 'check_agree']
         self.mqtt_client.publish("inference/request", json.dumps(file_paths))
+
+    def move_base(self, speed_lin, speed_rot, duration):
+        t0 = time()
+        movement_speed = Twist()
+        movement_speed.linear.x = speed_lin
+        movement_speed.angular.z = speed_rot
+        while time()-t0 < duration:
+            self.move_base_pub.publish(movement_speed)
+        # Enforce robot stop.
+        movement_speed.linear.x = 0.0
+        movement_speed.angular.z = 0.0
+        self.move_base_pub.publish(movement_speed)
 
     def move_arm(self, goal):
         if self.robot_model == 'krakow':
@@ -498,14 +547,15 @@ class UnderstandingNode:
 
     def point_and_ask(self, object, action, target , object_1_center, object_2_center):  # TODO: To be implemented, robot needs to repeat what it understood while pointing at objects.
         self.saved_depth_frame = self.depth_frame
-
+        self.set_arm_pub.publish(String(data="right"))
+        
         self.set_object_tf(object_1_center, self.object_tf)
         rospy.sleep(0.5)
         self.set_object_tf(object_2_center, self.target_tf)    
         rospy.sleep(0.5)
-        self.object_tf = self.change_parent(self.object_tf, self.arm_plan_tf)
-        self.target_tf = self.change_parent(self.target_tf, self.arm_plan_tf)
-
+        self.object_tf = self.change_parent(self.object_tf, "map")
+        self.target_tf = self.change_parent(self.target_tf, "map")
+        
         self.set_pointing_tf(self.object_tf, self.object_pointing_tf)
         rospy.sleep(0.75)
 
@@ -517,19 +567,27 @@ class UnderstandingNode:
         
         rospy.sleep(2.0)
         
+        self.set_obst_detect_mode.publish(Bool(data=True))
+
         self.move_arm(self.tf_to_pose(self.object_pointing_tf))
         if self.robot_model!="krakow":
-            rospy.sleep(6.0)
+            rospy.sleep(5.0)
         
         if not self.simulation:
+            if object in ["this", "that"]:
+                object = ""
             self.tiago_talk(f" this {object}")
+        rospy.sleep(.5)
+        self.set_arm_pub.publish(String(data="left"))
         rospy.sleep(.5)
 
         self.move_arm(self.tf_to_pose(self.target_pointing_tf))
 
         if self.robot_model!="krakow":
-            rospy.sleep(6.0)
+            rospy.sleep(5.0)
 
+        if target in ["this", "that"]:
+            target = ''
         if not self.simulation:
             self.tiago_talk(f"at this {target}?")
         sleep(2)
@@ -540,24 +598,131 @@ class UnderstandingNode:
         #TODO 2: IMPLEMENT ACTUAL TASK EXECUTION 
 
     def execute_pick_place(self):
-        self.go_home()
+        #move to top grap pose
+        rospy.loginfo("Moving to top grasp.")
+        self.go_top_grasp()
         rospy.sleep(10)
-        self.open_gripper(1.0)
-        self.object_tf.transform.translation.z+=0.15
-        self.target_tf.transform.translation.z+=0.15
-        rospy.sleep(2.0)
+        rospy.loginfo("Approaching table")
+        self.move_base(0.15, 0.0, 2.0)
+
+        self.set_arm_pub.publish(String(data="right"))
+
+        self.set_obst_detect_mode.publish(Bool(data=False))
+
+        # Prepare for pre-grasp
+        rospy.loginfo("Move to pre-grasp ")
+        # self.open_gripper(1.0)
+        self.object_tf.transform.translation.z += 0.35
+        
+        self.target_tf.transform.translation.z += 0.35
+        rospy.sleep(0.5)
+
+        self.object_tf = self.change_parent(self.object_tf, self.arm_plan_tf)
+
+        self.object_tf.transform.rotation.x=0
+        self.object_tf.transform.rotation.y=0
+        self.object_tf.transform.rotation.z=0
+        self.object_tf.transform.rotation.w=1
+
+        rospy.logerr(str([self.object_tf.transform.translation.x,
+                     self.object_tf.transform.translation.y,
+                     self.object_tf.transform.translation.z]))
+
+        self.target_tf = self.change_parent(self.target_tf, self.arm_plan_tf)
+
+        self.object_tf.transform.translation.x += 0.02
+        self.object_tf.transform.translation.y -= 0.01
+        self.target_tf.transform.rotation.x=0
+        self.target_tf.transform.rotation.y=0
+        self.target_tf.transform.rotation.z=0
+        self.target_tf.transform.rotation.w=1
+        
+
+        rospy.sleep(.5)
+        
         pick_pose = self.tf_to_pose(self.object_tf)
         self.move_arm(pick_pose)
         if  self.robot_model!='krakow':
             rospy.sleep(7.0)
+
+        #adjust to gripper for pick
+        rospy.loginfo("Adjusting gripper pose")
+        
+        self.joint_command({"torso_lift_joint":self.joint_states[20]+0.1,
+                            "arm_right_1_joint":self.joint_states[7], 
+                            "arm_right_2_joint":self.joint_states[8],
+                            "arm_right_3_joint":self.joint_states[9],
+                            "arm_right_4_joint":self.joint_states[10], 
+                            "arm_right_5_joint": -2.0,
+                            "arm_right_6_joint": 1.38, 
+                            "arm_right_7_joint": 0.0})
+
+        if  self.robot_model!='krakow':
+            rospy.sleep(5.0)
+
+        rospy.loginfo("Lowering torso")
+        #lower
+        
+        self.joint_command({"torso_lift_joint": self.joint_states[20]-0.05,
+                            "arm_right_1_joint":self.joint_states[7], 
+                            "arm_right_2_joint":self.joint_states[8],
+                            "arm_right_3_joint":self.joint_states[9],
+                            "arm_right_4_joint":self.joint_states[10], 
+                            "arm_right_5_joint": -2.0,
+                            "arm_right_6_joint": 1.38, 
+                            "arm_right_7_joint": 0.0})
+
+        if  self.robot_model!='krakow':
+            rospy.sleep(5.0)
+
+        rospy.loginfo("Closing gripper")
+        #close gripper
         self.close_gripper(1.0)
-        rospy.sleep(1.0)
+        rospy.sleep(3.0)
+
+        self.joint_command({"torso_lift_joint":self.joint_states[20]+0.15,
+                            "arm_right_1_joint":self.joint_states[7], 
+                            "arm_right_2_joint":self.joint_states[8],
+                            "arm_right_3_joint":self.joint_states[9],
+                            "arm_right_4_joint":self.joint_states[10], 
+                            "arm_right_5_joint": self.joint_states[11],
+                            "arm_right_6_joint": self.joint_states[12], 
+                            "arm_right_7_joint": self.joint_states[13]})
+
+        if  self.robot_model!='krakow':
+            rospy.sleep(5.0)
+
+
+        # move to drop position
+        rospy.loginfo("Moving to target location")
         drop_pose = self.tf_to_pose(self.target_tf)
         self.move_arm(drop_pose)
+
         if  self.robot_model!='krakow':
             rospy.sleep(7.0)
-        self.open_gripper(1.0)
+        
+        # adjest gripper if needed
+        rospy.loginfo("Adjusting gripper again")
+        
+        self.joint_command({"torso_lift_joint":self.joint_states[20],
+                            "arm_right_1_joint":self.joint_states[7], 
+                            "arm_right_2_joint":self.joint_states[8],
+                            "arm_right_3_joint":self.joint_states[9],
+                            "arm_right_4_joint":self.joint_states[10], 
+                            "arm_right_5_joint": -2.0,
+                            "arm_right_6_joint": 1.38, 
+                            "arm_right_7_joint": 1.8})
+        #open gripper
+        if  self.robot_model!='krakow':
+            rospy.sleep(7.0)
 
+        rospy.loginfo("Opening gripper")
+        self.open_gripper(1.0)
+        rospy.sleep(3.0)
+        if  self.robot_model!='krakow':
+            rospy.sleep(7.0)
+        self.set_obst_detect_mode.publish(Bool(data=True))
+        
     def run(self):
         # Run the ROS node
         rospy.spin()
@@ -569,6 +734,10 @@ if __name__ == '__main__':
     client_thread.start()
 
     node = UnderstandingNode()
-    node.go_home()
+    # node.publish_vad_status(False)
+    # node.go_home()
+    # if node.robot_model != 'krakow':
+    #     rospy.sleep(10.0)
+    # node.publish_vad_status(True)
     node.run()
 

@@ -46,7 +46,6 @@ from scipy.spatial import voronoi_plot_2d
 import numpy as np 
 import paho.mqtt.client as mqtt
 import json
-from ast import literal_eval
 
 def check_agree(audio_path, device='auto'):
     if device == "auto":
@@ -101,15 +100,16 @@ def understand(audio_path, video_path, device="auto"):
     command_extractor = CommandExtractor(device=device, torch_dtype=torch_dtype)
     
     print("HEARD: ", transcription["text"])
-    complete = command_extractor.check_command_completeness(transcription["text"])
-    print("COMPLETION ANALYSIS RESULT: ", complete)
+    # complete = command_extractor.check_command_completeness(transcription["text"])
+    # print("COMPLETION ANALYSIS RESULT: ", complete)
 
-    print("Transcription: ", transcription)
+    # print("Transcription: ", transcription)
 
-    if not complete:
-        print("FAILURE 1")
-        return ["incomplete"]
-
+    # if not complete:
+    #     print("FAILURE 1")
+    #     #return ["incomplete"] # TODO: MAke it work properly >:(
+    #     return ["ambiguous"] # Not really ambiguous, placeholder until you make incomplete work properly
+    
     command = command_extractor.extract(transcription)
     
     if isinstance(command.object, list):
@@ -189,6 +189,9 @@ def understand(audio_path, video_path, device="auto"):
     
     pointed_object_idx = None
     object_pointing_vec = None
+    pointed_target_idx = None
+    target_pointing_vec = None
+    
     if object_concrete:
     # If there are multiple objects detected, detect the pointing direction and choose the most likely one
         if len(object_results) > 1:
@@ -250,7 +253,7 @@ def understand(audio_path, video_path, device="auto"):
             table_cell_centers =  [np.array(r).mean(axis=0).tolist() for r in table_cells_regions]
             reference_center = [(target_results[pointed_target_idx].box.xmax+target_results[pointed_target_idx].box.xmin)/2,
                              (target_results[pointed_target_idx].box.ymax+target_results[pointed_target_idx].box.ymin)/2]
-            print(target_results[pointed_target_idx].box, reference_center)
+            # print(target_results[pointed_target_idx].box, reference_center)
             
             other_objects = object_detector.detect(object_image, "objects")
             # other_objects_contours = [ cv2.findContours((o.mask * 255).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE) for o in other_objects if o.mask is not None]
@@ -332,7 +335,7 @@ def understand(audio_path, video_path, device="auto"):
             # load depth_estimator
             depth_estimator = DepthEstimator()
             depths = depth_estimator.estimate_depth(target_frame_path).cpu()
-            depth_estimator.render_depth(depths)
+            depth_estimator.render_depth(depths, "/home/student/krakow/antonio/uncom/output")
             # unload depth estimator
             del depth_estimator
 
@@ -355,9 +358,9 @@ def understand(audio_path, video_path, device="auto"):
             discard_outliers = zip(table_cells_regions, table_cell_centers)
             saved_voronois = []
             for c in discard_outliers:
-                print(123, c[1][0],c[1][1])
+                # print(123, c[1][0],c[1][1])
                 if c[1][0]<=1079 and c[1][1]<=1919:
-                    print(45100, c[1][0],c[1][1])
+                    # print(45100, c[1][0],c[1][1])
                     saved_voronois.append(c)
 
             table_cells_regions, table_cell_centers = zip(*saved_voronois)
@@ -430,7 +433,7 @@ def understand(audio_path, video_path, device="auto"):
     del hand_detector
     torch.cuda.empty_cache()
     
-    if pointed_object_idx is None or pointed_target_idx is None:
+    if pointed_object_idx is None or (pointed_target_idx is None and chosen_area is []):
         print("FAILURE 7")
         return ['ambiguous']
 
@@ -484,7 +487,7 @@ def understand(audio_path, video_path, device="auto"):
     annotated_action.save(annotated_action_path)
     print(f"Saved annotated action image to {annotated_action_path}")
     try:
-        return ["OK", command.object.text, command.action.text, command.target.text, object_results[pointed_object_idx or 0].box.center, target_results[pointed_target_idx or 0].box.center]
+        return ["OK", command.object.text, command.action.text, command.target.text, list(object_results[pointed_object_idx or 0].box.center), list(target_results[pointed_target_idx or 0].box.center)]
     
     except Exception as e:
         print (f"Failed to extract bouding box due to error: {e}")
@@ -493,6 +496,7 @@ def understand(audio_path, video_path, device="auto"):
 
 def on_message(client, userdata, message):
     #file_paths = literal_eval(json.loads(message.payload.decode("utf-8")))
+    print(f"Message: {message} received!")
     file_paths = json.loads(message.payload.decode("utf-8"))
     audio_path = file_paths[0]
     video_path = file_paths[1]

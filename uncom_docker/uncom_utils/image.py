@@ -318,7 +318,6 @@ def annotate_image(
     # Convert PIL Image to OpenCV format
     image_cv2 = np.array(image) if isinstance(image, Image.Image) else image
     image_cv2 = cv2.cvtColor(image_cv2, cv2.COLOR_RGB2BGR)
-    print("THIS IS POINTING VECTOR: ", pointing_vec)
     # Iterate over detections and add bounding boxes and masks
     for i, detection in enumerate(detection_results):
         label = detection.label
@@ -553,7 +552,7 @@ class CenterPadding(torch.nn.Module):
         faiss.normalize_L2(vector)
         self.index = faiss.read_index("vector.index")
         d, most_similar_obj_index = self.index.search(vector,1)
-        print('distances:', d, 'indexes:', most_similar_obj_index)
+        #print('distances:', d, 'indexes:', most_similar_obj_index)
         return most_similar_obj_index 
 
 
@@ -617,16 +616,16 @@ class DepthEstimator:
             ),
         ])
 
-    def render_depth(self, values, colormap_name="magma_r") -> Image:
+    def render_depth(self, values, output_dir, colormap_name="magma_r") -> Image:
         values = values.cpu()
         min_value, max_value = values.min(), values.max()
         normalized_values = (values - min_value) / (max_value - min_value)
-        print(values)
+        #print(values)
         colormap = matplotlib.colormaps[colormap_name]
         colors = colormap(normalized_values, bytes=True) # ((1)xhxwx4)
         colors = colors[:, :, :3] # Discard alpha component
         dpth_img = Image.fromarray(colors)
-        dpth_img.save("/home/robot/Code/uncom-non-concrete-handling/output_dir/depth.png")
+        dpth_img.save(str(Path(output_dir) / "depth.png"))
         return dpth_img
 
     def create_depther(self, cfg, backbone_model, backbone_size, head_type):
@@ -713,7 +712,7 @@ def line_plane_intersection(A, B, grid):
     ip = intersection_point
     print("interection Point: ", ip)
     dists = [np.sqrt((ip[0]-p[0])**2+(ip[1]-p[1])**2+(ip[2]-p[2])**2) for p in my_centers]
-    print("Distancias: ", my_centers)
+    #print("Distancias: ", my_centers)
     my_centers = list(zip(dists,my_regions))
     my_centers.sort(key=lambda x:x[0])
     return my_centers[0][1]
