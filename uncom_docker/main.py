@@ -9,12 +9,11 @@
 ###############################################################################
 #                      UNCOM - Understanding Commands                         #
 ###############################################################################
-# Authors: Antonio Galiza Cerdeira Gonzalez, Pawel Gajewski and Bipin         #
-# Indurkhya                                                                   #
+# Authors: Removed for double blind review                                    #
 ###############################################################################
 # Release version: 0.2v                                                       #
 ###############################################################################
-# For inquiries, please contact: angacego (at) gmail.com                      #
+# For inquiries, please contact: Removed for double blind review              #
 ###############################################################################
 
 import time
