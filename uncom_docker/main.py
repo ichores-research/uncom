@@ -9,11 +9,12 @@
 ###############################################################################
 #                      UNCOM - Understanding Commands                         #
 ###############################################################################
-# Authors: Removed for double blind review                                    #
+# Authors: Antonio Galiza Cerdeira Gonzalez, Pawel Gajewski and Bipin         #
+# Indurkhya                                                                   #
 ###############################################################################
 # Release version: 0.2v                                                       #
 ###############################################################################
-# For inquiries, please contact: Removed for double blind review              #
+# For inquiries, please contact: angacego (at) gmail.com                      #
 ###############################################################################
 
 import time
@@ -122,6 +123,10 @@ def understand(audio_path, video_path, device="auto"):
     command.save(command_path)
     print(f"Saved command to {command_path}")
     
+    if command.object == '' or command.target == '' or len(command.object.timestamp)<1 or len(command.target.timestamp)<1:
+        print("FAILURE 1: OBJECT OR TARGET NOT UNDERSTOOD")
+        return ['ambiguous', "Failure 1: object or target missing"]
+
     # unload command_extractor model 
     del command_extractor
     torch.cuda.empty_cache()
@@ -146,7 +151,7 @@ def understand(audio_path, video_path, device="auto"):
     target_concrete = command.target.concrete
 
     # Load oject detector model
-    object_detector = ObjectDetector(device=device, torch_dtype=torch_dtype)
+    object_detector = ObjectDetector(device=device, torch_dtype=torch_dtype, detection_threshold=0.4)
     # Detect objects in the corresponding frames
     
     object_results = object_detector.detect(object_image, command.object.text)
@@ -167,16 +172,51 @@ def understand(audio_path, video_path, device="auto"):
         print(f"\n\n\n'{command.target.text}' could not be detected.\n\n\n")
     #TODO: Here is the moment to handle concrete vs non-concrete targets
 
-
     # load hand detector model 
     hand_detector = PointingDetector()
 
     # It is necessary to check if it is impossible to understand what the object and/or what the target is, 
     # that is, object/target is not concrete and  no pointing vector could be detected. Robot should ask for
     # new set of instructions
-    object_pointing_detected = len(hand_detector.detect(object_frame_path))>0
-    target_pointing_detected = len(hand_detector.detect(target_frame_path))>0
+    object_pointing_vec = hand_detector.detect(object_frame_path)
+    object_pointing_detected = len(object_pointing_vec)>0
+    
+    target_pointing_vec = hand_detector.detect(target_frame_path)
+    target_pointing_detected = len(target_pointing_vec)>0
+ 
+    frame_count = 1
+    while ((not object_pointing_detected) and frame_count<4): #If no hand was detected, try the next frame
+        try:
+            object_frame_path = extract_frame(video_path, command.object.timestamp[1]+frame_count*0.01) if command.object.timestamp[1] else extract_frame(video_path, command.object.timestamp[0]+frame_count*0.01)
+            object_pointing_vec = hand_detector.detect(object_frame_path)
+            object_pointing_detected = len(object_pointing_vec)>0
 
+            if frame_count < 0:
+                frame_count = -frame_count+1
+            else:
+                frame_count *= -1
+
+        except Exception as e:
+            print(f"ERROR {e}; failed to extract next frame.")
+            break
+
+    frame_count = 1
+    while ((not target_pointing_detected) and frame_count<4): #If no hand was detected, try the next frame
+        try:
+            target_frame_path = extract_frame(video_path, command.target.timestamp[1]+frame_count*0.01) if command.target.timestamp[1] else extract_frame(video_path, command.target.timestamp[0]+frame_count*0.01)
+            target_pointing_vec = hand_detector.detect(target_frame_path)
+            target_pointing_detected = len(target_pointing_vec)>0
+
+            if frame_count < 0:
+                frame_count = -frame_count+1
+            else:
+                frame_count *= -1
+
+        except Exception as e:
+            print(f"ERROR {e}; failed to extract next frame.")
+            break
+
+    
     impossible_task = (not (object_concrete or object_pointing_detected) or  # checks if the object is not concrete and if no hands were detected
                        not (target_concrete or target_pointing_detected) or  # checks if the target is not concrete and if no hands were detected
                        (object_concrete and len(object_results)==0) or  # checks if the object is concrete but could not be identified
@@ -184,7 +224,7 @@ def understand(audio_path, video_path, device="auto"):
     
     if impossible_task:
         print("FAILURE 2")
-        return ["ambiguous"]
+        return ["ambiguous", "failure 2: unclear object/target and no pointing detected"]
     
     pointed_object_idx = None
     object_pointing_vec = None
@@ -214,7 +254,7 @@ def understand(audio_path, video_path, device="auto"):
 
         except Exception as e:
             print("FAILURE 3")
-            return ["ambiguous"]
+            return ["ambiguous", "failure 3: multiple objects detected, no pointing dected"]
 
     target_pointing_vec = hand_detector.detect(target_frame_path)
     
@@ -241,7 +281,7 @@ def understand(audio_path, video_path, device="auto"):
             pointed_target_idx = 0
         else:
             print("FAILURE 4")
-            return ["ambiguous"]
+            return ["ambiguous", "failure 4: multiple concrete targets, no pointing detected"]
 
         if relative_position: # Case 2), relative to an object
 
@@ -293,7 +333,11 @@ def understand(audio_path, video_path, device="auto"):
             if len(grid)>0:
                 area_target = True
                 _, center , region = zip(*grid)
-                p1, p2 = target_pointing_vec
+                try:
+                    p1, p2 = target_pointing_vec
+                except ValueError:
+                    print("FAILURE 5")
+                    return ["ambiguous", "failure 5: area target, but no pointing detected."]
         
                 distances = [np.sqrt( (c[0]-p2[0])**2+(c[1]-p2[1])**2 ) for c in center]
                 decision = list(zip(distances, region))
@@ -314,7 +358,7 @@ def understand(audio_path, video_path, device="auto"):
                 # ax.axis('off')
                 # plt.show()
             else:
-                print("FAILURE 5")
+                print("FAILURE 6")
                 return ["ambiguous"]
         else:
             pass
@@ -334,7 +378,7 @@ def understand(audio_path, video_path, device="auto"):
             # load depth_estimator
             depth_estimator = DepthEstimator()
             depths = depth_estimator.estimate_depth(target_frame_path).cpu()
-            depth_estimator.render_depth(depths, "/home/student/krakow/antonio/uncom/output")
+            depth_estimator.render_depth(depths, str(video_path.parent))
             # unload depth estimator
             del depth_estimator
 
@@ -369,7 +413,7 @@ def understand(audio_path, video_path, device="auto"):
             for i,c in enumerate(table_cell_centers):
                 x = int(c[1])
                 y = int(c[0])
-                if x<0 or x> image_width or y<0 or y>image_height:
+                if x<0 or x> image_width-1 or y<0 or y>image_height-1:
                     table_cell_centers_depth.append(float("inf"))
                 else:
                     table_cell_centers_depth.append(depths[y,x].numpy().tolist())
@@ -434,7 +478,7 @@ def understand(audio_path, video_path, device="auto"):
     
     if pointed_object_idx is None or (pointed_target_idx is None and chosen_area is []):
         print("FAILURE 7")
-        return ['ambiguous']
+        return ['ambiguous', "failure 7: failed to identify pointed target/area"]
 
     # load segmenter model 
     segmenter = Segmenter(device=device, torch_dtype=torch_dtype)
@@ -451,11 +495,9 @@ def understand(audio_path, video_path, device="auto"):
         pointed_target_idx = 0       
     else:
         [target_results[pointed_target_idx]] = segmenter.segment(target_image, [target_results[pointed_target_idx]])
-       
 
     print(f"Segmented object '{command.object.text}'")
     print(f"Segmented target '{command.target.text}'")
-
 
     # unload segmenter_model 
     del segmenter
@@ -482,7 +524,8 @@ def understand(audio_path, video_path, device="auto"):
     annotated_action = annotate_action(
         annotated_object_image, annotated_target_image, caption
     )
-    annotated_action_path = output_dir / "annotated_action.png"
+    name = str(video_path).replace('.mp4','')
+    annotated_action_path = output_dir / f"{name}_annotated_action.png"
     annotated_action.save(annotated_action_path)
     print(f"Saved annotated action image to {annotated_action_path}")
     try:
@@ -490,8 +533,8 @@ def understand(audio_path, video_path, device="auto"):
     
     except Exception as e:
         print (f"Failed to extract bouding box due to error: {e}")
-        print("FAILURE 7")
-        return ["ambiguous"]
+        print("FAILURE 8")
+        return ["ambiguous", "failure 8: failed to extract bounding box"]
 
 def on_message(client, userdata, message):
     #file_paths = literal_eval(json.loads(message.payload.decode("utf-8")))
@@ -500,18 +543,18 @@ def on_message(client, userdata, message):
     audio_path = file_paths[0]
     video_path = file_paths[1]
     inference = file_paths[2]
-    # try:
-    result = None
-    if inference == 'understand':
-        result = understand(audio_path, video_path)
-        print(result)
-    elif inference == 'check_agree':
-        result = [check_agree(audio_path)]
-        print(result)
-    client.publish("inference/response", json.dumps(str(result)))
-        # except Exception as e:
-    # print(f"Understanding commands failed due to {e}")
-    # client.publish("inference/response", json.dumps(["ambiguous"]))
+    try:
+        result = None
+        if inference == 'understand':
+            result = understand(audio_path, video_path)
+            print(result)
+        elif inference == 'check_agree':
+            result = [check_agree(audio_path)]
+            print(result)
+        client.publish("inference/response", json.dumps(str(result)))
+    except Exception as e:
+        print(f"Understanding commands failed due to {e}")
+        client.publish("inference/response", json.dumps(["ambiguous"]))
 
 client = mqtt.Client()
 client.on_message = on_message

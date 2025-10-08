@@ -14,7 +14,7 @@ PROMPT = """You will receive a Whisper transcription JSON. Extract exactly one c
 - an action (verb or phrasal verb),
 - a target (noun + optional adjectives, including any positional descriptors like "next to", "between", "near", etc.), or a reference to a target, like "this", "here" or "there".
 
-Return a single JSON object with the keys: "object", "action", and "target". Each key should contain a "text" string and a "timestamp" array from the original transcription. If any element is missing or unclear, leave its value empty.
+Return a single JSON object with the keys: "object", "action", and "target". Each key should contain a "text" string and a single "timestamp" [start, finish] from the original transcription. If any element is missing or unclear, leave its value empty.
 
 Follow this example strictly:
 
