@@ -1,0 +1,20 @@
+version: '3.8'
+services:
+  uncom:
+    image: uncom
+    build:
+      context: .
+      dockerfile: dockerfile_ros
+    network_mode: "host"
+    runtime: "nvidia"
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - /etc/localtime:/etc/localtime:ro
+      - ./models:/root/models:ro
+      - ./main.py:/root/main.py:rw
+    environment: 
+      - DISPLAY
+      - QT_X11_NO_MITSHM=1
+    command: bash -c "python3 ./main.py"        
+    stdin_open: true
+    tty: true
