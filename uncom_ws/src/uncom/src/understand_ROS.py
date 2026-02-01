@@ -730,6 +730,7 @@ class UnderstandingNode:
 
 if __name__ == '__main__':
     # Instantiate the UnderstandingNode class and run the node
+    sleep(3.0)
     client_thread = Thread(target=loop_client,args=[client])
     client_thread.start()
 

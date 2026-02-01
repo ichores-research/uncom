@@ -29,7 +29,7 @@ from uncom_utils.image import (
     DetectionResult,
     BoundingBox,
     DepthEstimator,
-    # SimilarityCalculator,
+    SimilarityCalculator,
     annotate_action,
     annotate_image,
     extract_frame,
@@ -100,15 +100,6 @@ def understand(audio_path, video_path, device="auto"):
     command_extractor = CommandExtractor(device=device, torch_dtype=torch_dtype)
     
     print("HEARD: ", transcription["text"])
-    # complete = command_extractor.check_command_completeness(transcription["text"])
-    # print("COMPLETION ANALYSIS RESULT: ", complete)
-
-    # print("Transcription: ", transcription)
-
-    # if not complete:
-    #     print("FAILURE 1")
-    #     #return ["incomplete"] # TODO: MAke it work properly >:(
-    #     return ["ambiguous"] # Not really ambiguous, placeholder until you make incomplete work properly
     
     command = command_extractor.extract(transcription)
     
@@ -264,8 +255,7 @@ def understand(audio_path, video_path, device="auto"):
         # 3) target is an object described as "this" or "there";
         # 4) target is an empty space.
     
-    #target_concrete = False
-    # relative_position = True     
+   
     area_target = False
     if "here" in command.target.text or "there" in command.target.text:
         area_target = True
@@ -292,10 +282,8 @@ def understand(audio_path, video_path, device="auto"):
             table_cell_centers =  [np.array(r).mean(axis=0).tolist() for r in table_cells_regions]
             reference_center = [(target_results[pointed_target_idx].box.xmax+target_results[pointed_target_idx].box.xmin)/2,
                              (target_results[pointed_target_idx].box.ymax+target_results[pointed_target_idx].box.ymin)/2]
-            # print(target_results[pointed_target_idx].box, reference_center)
             
             other_objects = object_detector.detect(object_image, "objects")
-            # other_objects_contours = [ cv2.findContours((o.mask * 255).astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE) for o in other_objects if o.mask is not None]
 
             other_objects_bb = []
             for o in other_objects:
@@ -341,22 +329,8 @@ def understand(audio_path, video_path, device="auto"):
         
                 distances = [np.sqrt( (c[0]-p2[0])**2+(c[1]-p2[1])**2 ) for c in center]
                 decision = list(zip(distances, region))
-                decision.sort(key=lambda x:x[0])
-                # print(decision[0][0], decision[0][1])
-                # img = plt.imread(target_frame_path)
-                # fig, ax = plt.subplots()
-                # ax.imshow(img, extent=[0, image_width, 0, image_height],origin="lower")    
-                # voronoi_plot_2d(table_cells, ax=ax)
-                
+                decision.sort(key=lambda x:x[0])                
                 chosen_area = decision[0][1]
-
-                # x, y = zip(*decision[0][1])
-                # ax.scatter([reference_center[0]], [reference_center[1]])
-                # ax.fill(list(x),list(y),"r",alpha=0.3)
-                # ax.set_xlim((0, image_width))
-                # ax.set_ylim((0, image_height))
-                # ax.axis('off')
-                # plt.show()
             else:
                 print("FAILURE 6")
                 return ["ambiguous"]
@@ -441,36 +415,8 @@ def understand(audio_path, video_path, device="auto"):
 ##########################################################################################################
 
             _, table_cell_centers, table_cells_regions = zip(*grid)
-
-
-            # distances = pointed_area(target_pointing_vec_3D, np.array(p1.tolist()+[p1_depth]), table_cell_centers)
-            # chosen_area = table_cells_regions[closest_to_fingertip(p1, table_cell_centers)]
             chosen_area = table_cells_regions[minimum_distante_to_vector_line(p2, target_pointing_vec_3D, table_cell_centers)]
-            # line_plane_intersection(p1, p2, list(zip(table_cell_centers, table_cells_regions)))
-
-            # grid = list(zip(distances, table_cells_regions))    
-            # grid.sort(key=lambda x:x[0])
-            # chosen_area = grid[0][1]
-
-            # img = plt.imread("/home/robot/Code/uncom-non-concrete-handling/output_dir/depth.png")
-            # fig, ax = plt.subplots()
-            # ax.scatter([p1[0]], [p1[1]], c="r")
-            # ax.scatter([p2[0]], [p2[1]], c="b")
-            # ax.axline((p1[0], p1[1]), (p2[0], p2[1]), color='purple', label="Infinite line")
-            # ax.imshow(img, extent=[0, 1920, 0, 1080],origin="lower")    
-            # voronoi_plot_2d(table_cells, ax=ax)
-            # for r in table_cells_regions:
-            #     x, y = zip(*r)    
-            #     ax.fill(list(x),list(y),"g",alpha=0.3)
-            # x, y = zip(*chosen_area)
-            # ax.fill(list(x),list(y),"r",alpha=0.8)
-            # ax.set_xlim((0, 1920))
-            # ax.set_ylim((0, 1080))
-            # ax.axis('off')
-            # plt.show()
             print(chosen_area)
-    # unload object detector model 
-    # unload hand_detector
 
     del object_detector
     del hand_detector

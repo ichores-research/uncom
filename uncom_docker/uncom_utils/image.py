@@ -54,6 +54,86 @@ def voronoi_segmenting(x_max, y_max, seed_num, x_min=0, y_min=0): #, img):
     return  Voronoi(seeds)
 
 
+def get_color_profile(image):
+    #TODO: requires some tunning of qty of bins 
+    # 1. Convert to HSV
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    
+    # 2. Calculate a 2D Histogram for Hue (0-180) and Saturation (0-255)
+    # Using 30 bins for Hue and 32 for Saturation is usually enough to 
+    # distinguish a "blue/silver" profile from a "red/silver" one.
+    hist = cv2.calcHist([hsv], [0, 1], None, [30, 32], [0, 180, 0, 256])
+    
+    # 3. Normalize so that the size of the crop doesn't change the score
+    cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
+
+    return hist
+
+
+def compute_color_histogram_similarity(hist1, hist2):
+    # 1.0 = identical profiles, 0.0 = no similarity
+    score = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
+    return score
+
+
+def get_otsu_mask(crop):
+    # 1. Grayscale and Blur
+    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    
+    # 2. Otsu's Thresholding
+    _, mask = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    # 3. Clean up (Fill holes/remove small noise)
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    
+    return mask
+
+
+def get_final_shape_signature(crop, target_size=(128, 128)):
+    # 1. Get Otsu Mask
+    mask = get_otsu_mask(crop)
+    
+    # 2. Normalize Size
+    normalized_mask = cv2.resize(mask, target_size, interpolation=cv2.INTER_NEAREST)
+    
+    # 3. FFT
+    f_shift = np.fft.fftshift(np.fft.fft2(normalized_mask.astype(float)))
+    magnitude = np.abs(f_shift)
+    
+    # 4. Normalize Intensity (DC normalization)
+    # Divide by the center value so the signature is independent of area
+    magnitude /= (magnitude[target_size[0]//2, target_size[1]//2] + 1e-8)
+    
+    return np.log(magnitude + 1)
+
+
+def get_rotation_invariant_signature(fft_magnitude):
+    h, w = fft_magnitude.shape
+    center = (h // 2, w // 2)
+    
+    # Create a coordinate grid
+    y, x = np.ogrid[:h, :w]
+    dist_from_center = np.sqrt((x - center[0])**2 + (y - center[1])**2).astype(int)
+
+    # Average the intensity at each radius
+    # (Using a max radius that fits in the square)
+    max_radius = h // 2
+    radial_profile = np.zeros(max_radius)
+    
+    for r in range(max_radius):
+        # Find all pixels at distance 'r' from center and average them
+        radial_profile[r] = np.mean(fft_magnitude[dist_from_center == r])
+        
+    return radial_profile
+
+
+def compare_radial_profiles(profile1, profile2):
+    # Just a simple correlation of 1D arrays
+    return np.corrcoef(profile1, profile2)[0, 1]
+
+
 def extract_frame(video_path, time):
     """
     Extracts a frame from a video at a given time. Uses ffmpeg.
@@ -509,22 +589,22 @@ class CenterPadding(torch.nn.Module):
         output = F.pad(x, pads)
         return output
 
-    class SimilarityCalculator:
-        def __init__(self):
-            self.device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
-            self.processor = AutoImageProcessor.from_pretrained('facebook/dinov2-small')
-            self.model = AutoModel.from_pretrained('facebook/dinov2-small').to(self.device)
-            self.index = faiss.IndexFlatL2(384)
+class SimilarityCalculator:
+    def __init__(self):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else "cpu")
+        self.processor = AutoImageProcessor.from_pretrained('facebook/dinov2-small')
+        self.model = AutoModel.from_pretrained('facebook/dinov2-small').to(self.device)
+        self.index = faiss.IndexFlatL2(384)
 
-        def add_vector_to_index(self, embedding):
-            #convert embedding to numpy
-            vector = embedding.detach().cpu().numpy()
-            #Convert to float32 numpy
-            vector = np.float32(vector)
-            #Normalize vector: important to avoid wrong results when searching
-            faiss.normalize_L2(vector)
-            #Add to index
-            self.index.add(vector)
+    def add_vector_to_index(self, embedding):
+        #convert embedding to numpy
+        vector = embedding.detach().cpu().numpy()
+        #Convert to float32 numpy
+        vector = np.float32(vector)
+        #Normalize vector: important to avoid wrong results when searching
+        faiss.normalize_L2(vector)
+        #Add to index
+        self.index.add(vector)
 
     def generate_faiss_index(self, image, object_list):
         bbox_list = []
