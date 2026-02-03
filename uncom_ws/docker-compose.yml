@@ -9,7 +9,10 @@ services:
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - /etc/localtime:/etc/localtime:ro
-      - ./:/root/catkin_ws:rw
+      - ./src/arm_commander:/root/catkin_ws/src/arm_commander:rw
+      - ./src/pal_interaction_msgs:/root/catkin_ws/src/pal_interaction_msgs:rw
+      - ./src/tiago_robot:/root/catkin_ws/src/tiago_robot:rw
+      - ./src/uncom:/root/catkin_ws/src/uncom:rw
 
     environment: 
       - DISPLAY
@@ -17,6 +20,10 @@ services:
 
     command: >
       bash -c "source /opt/ros/noetic/setup.bash &&
+               export ROS_MASTER_URI=http://tiago-218c:11311 &&
+               export ROS_IP=10.68.0.128 &&
+               cd /root/catkin_ws &&
+               catkin build &&
                source /root/catkin_ws/devel/setup.bash &&
                roslaunch uncom uncom.launch"
 

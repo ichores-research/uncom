@@ -13,17 +13,24 @@ RUN apt-get update && apt-get install -y curl && \
     python3-catkin-tools \
     mosquitto\
     python3-pip\
+    libgl1-mesa-glx \
+    libgomp1 \
+    libusb-1.0-0 \
     git && \
     rm -rf /var/lib/apt/lists/*
 
 SHELL ["/bin/bash", "-c"]
 
 # 2. Setup Workspace
+RUN mkdir -p /root/output  # directory of media files for uncom
 RUN mkdir -p /root/catkin_ws/src
 WORKDIR /root/catkin_ws/src
 
+RUN pip install webrtcvad paho-mqtt open3d
+
 # 3. Clone Repos
 RUN git clone https://github.com/ichores-research/motion_msgs.git
+RUN git clone https://github.com/v4r-tuwien/object_detector_msgs.git
 
 # 4. BUILD - THIS IS THE IMPORTANT PART
 # You MUST source the TIAGo workspace HERE so catkin sees 'tiago_description'
@@ -37,10 +44,7 @@ RUN echo "source /opt/ros/noetic/setup.bash" >> ~/.bashrc && \
     echo "source /tiago_public_ws/devel/setup.bash" >> ~/.bashrc && \
     echo "source /root/catkin_ws/devel/setup.bash" >> ~/.bashrc
 
-RUN pip install webrtcvad paho-mqtt
-
 WORKDIR /root
-COPY . /root/
 
 # 6. Run Command
 CMD [ "bash", "-c", "source /opt/ros/noetic/setup.bash && source /tiago_public_ws/devel/setup.bash && source /root/catkin_ws/devel/setup.bash]

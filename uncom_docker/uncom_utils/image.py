@@ -380,6 +380,45 @@ class ObjectDetector:
         return results
 
 
+class ObjectDetectorGDRNetPP:
+    """
+    A class to detect objects in an image based on a description.
+    """
+
+    def __init__(
+        self, device="cuda", torch_dtype="auto", detection_threshold=0.3
+    ) -> None:
+        #KEEP GROUNDING DINO AS A FALLBACK IF GDRNet++ fails
+        # Grounding DINO model for zero-shot object detection
+        model_id = "IDEA-Research/grounding-dino-tiny"
+        self.pipeline = pipeline(
+            model=model_id,
+            task="zero-shot-object-detection",
+            device=device,
+            torch_dtype=torch_dtype,
+        )
+        self.detection_threshold = detection_threshold
+
+    def detect_gdrnet(self, detections):
+        pass
+
+    def detect_dino(
+        self, image: Union[str, Image.Image], description: str
+    ) -> List[DetectionResult]:
+        # The model works better with a period at the end of the description
+        if not description.endswith("."):
+            description += "."
+
+        results = self.pipeline(
+            image, candidate_labels=[description], threshold=self.detection_threshold
+        )
+
+        # Convert results to DetectionResult objects
+        results = [DetectionResult.from_dict(result) for result in results]
+
+        return results
+
+
 def annotate_image(
     image: Union[Image.Image, npt.NDArray],
     detection_results: List[DetectionResult],
