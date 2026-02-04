@@ -6,7 +6,7 @@ from motion_msgs.srv import Pick as Place
 from motion_msgs.srv import PickRequest as PlaceRequest
 from motion_msgs.srv import Pick as ToPose  # added for code understandability, so ToPose requests are not misunderstood as Pick
 from motion_msgs.srv import PickRequest as ToPoseRequest # added for code understandability
-
+from std_srvs.srv import Empty, EmptyRequest, EmptyResponse
 
 from std_srvs.srv import SetBool, SetBoolRequest
 from geometry_msgs.msg import Pose, PoseArray, Point32, PoseStamped #, Twist 
@@ -233,3 +233,19 @@ def move_to_pose(pose:Pose):
     except Exception as e:
         print(f"An error occurred: {e}")
         return False
+
+
+def open_gripper():
+    open_gripper_service = rospy.ServiceProxy('/motion/open_gripper', Empty)
+    rospy.wait_for_service('/motion/open_grippper')    
+    gripper_req = EmptyRequest()
+    open_gripper_service(gripper_req)
+    return True
+
+
+def close_gripper():
+    close_gripper_service = rospy.ServiceProxy('/motion/close_gripper', Empty)
+    rospy.wait_for_service('/motion/close_grippper')    
+    gripper_req = EmptyRequest()
+    close_gripper_service(gripper_req)
+    return True

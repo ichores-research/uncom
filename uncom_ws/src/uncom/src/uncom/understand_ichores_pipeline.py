@@ -24,6 +24,8 @@ from uncom.object_detection import (detect_objects,
 from uncom.pick_and_place import (prepare_robot,
                             reset_planning_scene,
                             pick_object,
+                            open_gripper,
+                            close_gripper,
                             place_object,
                             move_to_pose)
 understood = []
@@ -134,6 +136,7 @@ class UnderstandingNode:
         self.publishable_tfs = [self.object_tf, self.object_pointing_tf, self.target_tf, self.target_pointing_tf]
         self.stored_command = []
         
+        self.objects_info = get_ycb_objects_info("ycbv_ichores")
 
         timer = rospy.Timer(rospy.Duration(0.1), self.tf_callback)
         timer 
@@ -239,7 +242,7 @@ class UnderstandingNode:
                         if bool(understood[0]):
                             self.publish_vad_status(False)
                             self.tiago_talk("OK, I will start!")
-                            self.execute_pick_place(self.stored_command)
+                            self.execute_pick_place(self.stored_command[4], self.stored_command[5])
 
                             rospy.sleep(3.0)
                             self.publish_vad_status(True)
@@ -496,32 +499,80 @@ class UnderstandingNode:
                 return object
         return
 
-    def pick_place(self, object, action, target , object_1_center, object_2_center):      
+    def execute_pick_place(self, object_1_center, object_2_center):      
+        
         preparation_success = prepare_robot()
         if not preparation_success:
             rospy.logerr("Robot failed to assume initial position, giving up.")
             return 
 
-        listener = tf.TransformListener()
-        print(f"{listener}")
-        wait_success = listener.waitForTransform("xtion_depth_optical_frame", "base_footprint", rospy.Time(), rospy.Duration(4.0))
+        wait_success = self.tf_listener.waitForTransform("xtion_depth_optical_frame", "base_footprint", rospy.Time(), rospy.Duration(4.0))
         print(f"wait success = {wait_success}")
         print("waiting done.")
 
-        # input("Press enter to detect objections:")
-
         detections = detect_objects()
 
-        pick_object = self.match_dino_2_gdrnet(detections, object_1_center)
-        pose_gdrnpp_pick = None
-        if pick_object is None:
-            rospy.logerr("No correspondence to GDRNet++ detections, might be empty space, fall back to depth-based method.")
-            return 
-        else:
-            pose_gdrnpp_pick = get_object_pose(pick_object.name)
-
+        to_pick_object = self.match_dino_2_gdrnet(detections, object_1_center)
         place_destination = self.match_dino_2_gdrnet(detections, object_2_center)
         pose_gdrnpp_place = None
+
+        if to_pick_object is None:
+            depth_image = np.frombuffer(self.saved_depth_frame.data, dtype=np.float32).reshape(self.saved_depth_frame.height, self.saved_depth_frame.width)
+            depth = depth_image[object_2_center[1], object_2_center[0]]
+            
+            fx = self.camera_info.K[0]
+            fy = self.camera_info.K[4]
+            cx = self.camera_info.K[2]
+            cy = self.camera_info.K[5]
+            
+            X = (object_2_center[0] - cx) * depth / fx
+            Y = (object_2_center[1] - cy) * depth / fy
+            Z = depth
+
+            pick_pose = Pose()
+            pick_pose.position.x = X
+            pick_pose.position.y = Y
+            pick_pose.position.z = Z            
+            open_gripper()
+            rospy.sleep(1.0)
+            move_to_pose(pick_pose)
+            close_gripper()
+    
+        pick_object_info = self.objects_info.get(to_pick_object.name, None)
+        
+        if pick_object_info is None:
+            print(f"Object {to_pick_object.name} not found in dataset.")
+            return
+
+        else:
+            pose_gdrnpp_pick = get_object_pose(to_pick_object.name)
+            if pose_gdrnpp_pick is  None:
+                print("Could not estimate object pose.")
+                return
+
+            pose_in_head = PoseStamped() #parsing to pose stamped
+            pose_in_head.header.frame_id = "xtion_depth_optical_frame"
+            pose_in_head.header.stamp = rospy.Time(0)  # latest available
+
+            pose_in_head.pose.position = pose_gdrnpp_pick.pose.position
+            pose_in_head.pose.orientation = pose_gdrnpp_pick.pose.orientation
+
+            try:
+                pose_in_base = self.tf_listener.transformPose("base_footprint", pose_in_head)
+
+            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+                print("Transform of the pose to base footprint failed.")
+                return
+
+            if pose_in_base:
+                for i in range (10):
+                    success = pick_object(index=i, 
+                                          mesh_path = pick_object_info["mesh_path"],
+                                          grasps = pick_object_info["grasps"],
+                                          pose = pose_in_base)
+                    if success:
+                        break 
+
         if place_destination is None:
             rospy.logwarn("No correspondence to GDRNet++ detections, might be empty space, fall back to depth-based method.")
             depth_image = np.frombuffer(self.saved_depth_frame.data, dtype=np.float32).reshape(self.saved_depth_frame.height, self.saved_depth_frame.width)
@@ -541,109 +592,37 @@ class UnderstandingNode:
             place_pose.position.x = X
             place_pose.position.y = Y
             place_pose.position.z = Z 
-            mesh = ""
-            place_object(place_destination, mesh_path=)
-
+            place_object(place_destination, mesh_path=f"/root/catkin_ws/src/uncom/data/datasets/ycb_ichores/models/obj_{int(11):06d}.ply")
 
         else: 
             pose_gdrnpp_place = get_object_pose(place_object.name)
-                    
+            place_object_info = self.objects_info.get(place_destination.name, None)
+            pose_in_head = PoseStamped() #parsing to pose stamped
+            pose_in_head.header.frame_id = "xtion_depth_optical_frame"
+            pose_in_head.header.stamp = rospy.Time(0)  # latest available
 
-        pose_in_head = PoseStamped() #parsing to pose stamped
-        pose_in_head.header.frame_id = "xtion_depth_optical_frame"
-        pose_in_head.header.stamp = rospy.Time(0)  # latest available
+            pose_in_head.pose.position = pose_gdrnpp_place.pose.position
+            pose_in_head.pose.orientation = pose_gdrnpp_place.pose.orientation
 
-        pose_in_head.pose.position = pose_gdrnpp_place.pose.position
-        pose_in_head.pose.orientation = pose_gdrnpp_place.pose.orientation
+            pose_in_head = PoseStamped() #parsing to pose stamped
+            pose_in_head.header.frame_id = "xtion_depth_optical_frame"
+            pose_in_head.header.stamp = rospy.Time(0)  # latest available
 
-        #print("Detected ", detections[0].name)
-        #print(f"At position :{round( pose_in_head.pose.position.x,2)}, {round(pose_in_head.pose.position.y,2)}, {round(pose_in_head.pose.position.z,2)}")
-            
-        try:
-            pose_in_base = listener.transformPose("base_footprint", pose_in_head)
-            print("Transformed pose:")
-            print("Position:", pose_in_base.pose.position)
-            print("Orientation:", pose_in_base.pose.orientation)
-            
-        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-            print("Transform of the pose to base footprint failed.")
-            return
-            
-        print("Attempting to pick...")
-
-        self.pick_object = TransformStamped()
-        self.pick_object.header.frame_id = "base_footprint"
-        self.pick_object.child_frame_id = detections[0].name
+            pose_in_head.pose.position = pose_gdrnpp_place.pose.position
+            pose_in_head.pose.orientation = pose_gdrnpp_place.pose.orientation
         
-        self.pick_object.transform.translation.x = pose_in_base.pose.position.x
-        self.pick_object.transform.translation.y = pose_in_base.pose.position.y
-        self.pick_object.transform.translation.z = pose_in_base.pose.position.z
-        
-        self.pick_object.transform.rotation.x = pose_in_base.pose.orientation.x
-        self.pick_object.transform.rotation.y = pose_in_base.pose.orientation.y
-        self.pick_object.transform.rotation.z = pose_in_base.pose.orientation.z
-        self.pick_object.transform.rotation.w = pose_in_base.pose.orientation.w
-
-        self.pose_pick_object = TransformStamped()
-        self.pose_pick_object.header.frame_id = f"pose_{detections[0].name}"
-        self.pose_pick_object.child_frame_id = detections[0].name
-        
-        self.pose_pick_object.transform.translation.x = pose_in_base.pose.position.x
-        self.pose_pick_object.transform.translation.y = pose_in_base.pose.position.y
-        self.pose_pick_object.transform.translation.z = pose_in_base.pose.position.z
-        
-        self.pose_pick_object.transform.rotation.x = pose_in_base.pose.orientation.x
-        self.pose_pick_object.transform.rotation.y = pose_in_base.pose.orientation.y
-        self.pose_pick_object.transform.rotation.z = pose_in_base.pose.orientation.z
-        self.pose_pick_object.transform.rotation.w = pose_in_base.pose.orientation.w   
-
-        self.publishable_tfs += [self.pick_object, self.pose_pick_object]     
-        pose_in_base.pose.position.z += 0.06
-
-        pick_success = False
-        count = 10
-        
-        object_info = self.objects_info.get(detections[0].name, None)
-        if object_info is None:
-            print(f"Object {detection.name} not found in dataset.")
-            return
-
-        print (f"\n\n\n\nShape of the grasp array is: {object_info['grasps'].shape}\n\n\n\n")
-        
-        filtered_grasps = object_info["grasps"] #np.array([grasp for grasp in object_info["grasps"] if grasp[0][11]<0])
-        pick_counter = 0 
-        while not pick_success or pick_counter < filtered_grasps.shape[0]:
-            pose_in_base.header.stamp = rospy.Time(0) 
-            print("\tAttempts left ", count)
-            print(f"Attempting grasp index {pick_counter}")
-            # index = int(input("Enter the grasp you want to try: "))
-            
-            pick_success = pick_object(
-                pick_counter, 
-                mesh_path=object_info["mesh_path"],
-                grasps = object_info["grasps"],
-                pose= pose_in_base.pose  
-                )
-            reset_planning_scene()
-            count -= 1
-            pick_counter += 1
-            if count == 0:
-                break
+            try:
+                pose_in_base = self.tf_listener.transformPose("base_footprint", pose_in_head)
                 
-            input(f"Press enter to try again: ")
+            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+                print("Transform of the pose to base footprint failed.")
+                return
 
-        message = f"Picked!" if pick_success else f"Failed to pick"
-        print(message)
-        
-        place_pose = pose_in_base.pose
-        place_pose.pose.position.x-=.3
-        result = place_object(pose = place_pose.pose, mesh_path = object_info["mesh_path"])
-        
-        message = f"Placed!" if result else f"Failed to place"
-        print(message)
+            if pose_in_base:
+                    success = place_object(pose_in_base, 
+                                           place_object_info["mesh_path"])
 
-        return 
-           
+
     def run(self):
         # Run the ROS node
         rospy.spin()
