@@ -520,12 +520,30 @@ class UnderstandingNode:
         else:
             pose_gdrnpp_pick = get_object_pose(pick_object.name)
 
-        place_object = self.match_dino_2_gdrnet(detections, object_2_center)
+        place_destination = self.match_dino_2_gdrnet(detections, object_2_center)
         pose_gdrnpp_place = None
-        if place_object is None:
+        if place_destination is None:
             rospy.logwarn("No correspondence to GDRNet++ detections, might be empty space, fall back to depth-based method.")
             depth_image = np.frombuffer(self.saved_depth_frame.data, dtype=np.float32).reshape(self.saved_depth_frame.height, self.saved_depth_frame.width)
             depth = depth_image[object_2_center[1], object_2_center[0]]
+            fx = self.camera_info.K[0]
+            fy = self.camera_info.K[4]
+            cx = self.camera_info.K[2]
+            cy = self.camera_info.K[5]
+            
+            # Convert pixel coordinates to 3D coordinates
+            X = (object_2_center[0] - cx) * depth / fx
+            Y = (object_2_center[1] - cy) * depth / fy
+            Z = depth
+
+            place_pose = Pose()
+
+            place_pose.position.x = X
+            place_pose.position.y = Y
+            place_pose.position.z = Z 
+            mesh = ""
+            place_object(place_destination, mesh_path=)
+
 
         else: 
             pose_gdrnpp_place = get_object_pose(place_object.name)
@@ -535,8 +553,8 @@ class UnderstandingNode:
         pose_in_head.header.frame_id = "xtion_depth_optical_frame"
         pose_in_head.header.stamp = rospy.Time(0)  # latest available
 
-        pose_in_head.pose.position = pose_gdrnpp.pose.position
-        pose_in_head.pose.orientation = pose_gdrnpp.pose.orientation
+        pose_in_head.pose.position = pose_gdrnpp_place.pose.position
+        pose_in_head.pose.orientation = pose_gdrnpp_place.pose.orientation
 
         #print("Detected ", detections[0].name)
         #print(f"At position :{round( pose_in_head.pose.position.x,2)}, {round(pose_in_head.pose.position.y,2)}, {round(pose_in_head.pose.position.z,2)}")
