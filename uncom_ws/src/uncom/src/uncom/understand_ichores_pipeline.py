@@ -25,7 +25,7 @@ from uncom.pick_and_place import (prepare_robot,
                             reset_planning_scene,
                             pick_object,
                             place_object,
-                            object_pose_tf_publisher)
+                            move_to_pose)
 understood = []
 
 
@@ -132,7 +132,7 @@ class UnderstandingNode:
         self.camera_info = rospy.wait_for_message('/xtion/depth_registered/camera_info', CameraInfo)
 
         self.publishable_tfs = [self.object_tf, self.object_pointing_tf, self.target_tf, self.target_pointing_tf]
-
+        self.stored_command = []
         
 
         timer = rospy.Timer(rospy.Duration(0.1), self.tf_callback)
@@ -185,7 +185,8 @@ class UnderstandingNode:
                             self.publish_vad_status(False)    
                             self.publish_clear_video()
                             self.publish_clear_audio() 
-                            self.point_and_ask(understood[1], understood[2], understood[3], understood[4], understood[5],)
+                            self.stored_command = understood
+                            self.point_and_ask(understood[1], understood[2], understood[3], understood[4], understood[5])
                             rospy.sleep(2.0)
                             self.publish_vad_status(True)
                             self.wait_confirmation = True
@@ -199,6 +200,7 @@ class UnderstandingNode:
                             self.silence_time = 0 
                             self.speech_detected = False
                             self.request_repeat()
+                            self.stored_command = []
                             rospy.sleep(6.0)
                             self.publish_vad_status(True)
 
@@ -217,7 +219,9 @@ class UnderstandingNode:
                             self.publish_audio_recording(False)
                             self.silence_time = 0 
                             self.speech_detected = False
-                            rospy.logerr("Error, unnexpected result for the understanding operation.")
+                            rospy.logerr("Error, unexpected result for the understanding operation.")
+                            self.stored_command = []
+                            
                     else:
                         understood = []
                         self.mqtt_agree_request()
@@ -235,12 +239,14 @@ class UnderstandingNode:
                         if bool(understood[0]):
                             self.publish_vad_status(False)
                             self.tiago_talk("OK, I will start!")
-                            # self.execute_pick_place() # TODO: FINISH CORRECTING PICK & PLACE
+                            self.execute_pick_place(self.stored_command)
+
                             rospy.sleep(3.0)
                             self.publish_vad_status(True)
                             
                         else:
                             self.publish_vad_status(False)
+                            self.stored_command=[]
                             self.request_repeat()
                             rospy.sleep(6.0)
                             rospy.loginfo ("CANCEL TASK")
@@ -432,7 +438,8 @@ class UnderstandingNode:
         file_paths = [str(self.output_dir / self.audio_filename), str(self.output_dir / self.video_filename), 'check_agree']
         self.mqtt_client.publish("inference/request", json.dumps(file_paths))
 
-    def move_arm(self, goal): pass
+    def move_arm(self, goal):
+        move_to_pose(goal)
 
     def point_and_ask(self, object, action, target , object_1_center, object_2_center):  # TODO: To be implemented, robot needs to repeat what it understood while pointing at objects.
         self.saved_depth_frame = self.depth_frame
@@ -476,38 +483,25 @@ class UnderstandingNode:
             target = ''
         if not self.simulation:
             self.tiago_talk(f"at this {target}?")
-        sleep(2)
         
+        rospy.sleep(2.0)        
         self.saved_depth_frame = None
-        #TODO 1: IMPLEMENT WAITING FOR HUMAN CONFIRMATION 
-        
-        #TODO 2: IMPLEMENT ACTUAL TASK EXECUTION 
 
-    def execute_pick_place(self):
-        """
-        Test the pick and place functionality.
-        Picks an apple from the table in front of the robot.
-        1. Prepares the robot
-        2. Detects objects on the table
-        3. Picks the apple
-        4. Reports success or failure
-        5. Retries up to 10 times if picking fails
-        6. Prints the result
-        """
-        print("Hello, starting pick up test")
-        
-        # First prepare the robot
-        # move_2_prepare_pose = bool(input("Insert 1 if you want to move the arm to the prepare pose, 0 otherwise. "))
-        # if move_2_prepare_pose:
+    def check_inside_bbox(self, bbox, xpoint, ypoint):
+        return (bbox.xmin <= xpoint <= bbox.xmax) and (bbox.ymin <= ypoint <= bbox.ymax)
+         
+    def match_dino_2_gdrnet(self, detections, object_center):
+        for object in detections:
+            if self.check_inside_bbox(object.bbox, object_center[0], object_center[1]):
+                return object
+        return
+
+    def pick_place(self, object, action, target , object_1_center, object_2_center):      
         preparation_success = prepare_robot()
-        
-        # print(f"Preparation submit success {preparation_success}") # TODO: This currently prints "None" and claims the preparation was unsuccesful
-        # if not preparation_success:
-        #     print("Robot preparation failed.")
-        #     return
+        if not preparation_success:
+            rospy.logerr("Robot failed to assume initial position, giving up.")
+            return 
 
-        # input("Press enter to continue with transform:")
-        
         listener = tf.TransformListener()
         print(f"{listener}")
         wait_success = listener.waitForTransform("xtion_depth_optical_frame", "base_footprint", rospy.Time(), rospy.Duration(4.0))
@@ -517,32 +511,25 @@ class UnderstandingNode:
         # input("Press enter to detect objections:")
 
         detections = detect_objects()
-        if len(detections) == 0:
-            print("No objects detected.")
-            return
 
-        print(f"Detected {detections}")
-
-        detection = detections[0]
-        rospy.loginfo(f"Working with detection = {detection.name}")
-        if "banana" in detection.name:
-            rospy.set_param("/motion/closed_gripper_joint", 0.015)
-        elif "mustard" in detection.name:
-            rospy.set_param("/motion/closed_gripper_joint", 0.025)
-        elif "apple" in detection.name:
-            rospy.set_param("/motion/closed_gripper_joint", 0.03)
-        elif "mug" in detection.name:
-            rospy.set_param("/motion/closed_gripper_joint", 0.005)
+        pick_object = self.match_dino_2_gdrnet(detections, object_1_center)
+        pose_gdrnpp_pick = None
+        if pick_object is None:
+            rospy.logerr("No correspondence to GDRNet++ detections, might be empty space, fall back to depth-based method.")
+            return 
         else:
-            rospy.set_param("/motion/closed_gripper_joint", 0.025)
-            
-        pose_gdrnpp = get_object_pose(detection.name)
+            pose_gdrnpp_pick = get_object_pose(pick_object.name)
 
-        print(pose_gdrnpp)
-        
-        if pose_gdrnpp is  None:
-            print("Could not estimate object pose.")
-            return
+        place_object = self.match_dino_2_gdrnet(detections, object_2_center)
+        pose_gdrnpp_place = None
+        if place_object is None:
+            rospy.logwarn("No correspondence to GDRNet++ detections, might be empty space, fall back to depth-based method.")
+            depth_image = np.frombuffer(self.saved_depth_frame.data, dtype=np.float32).reshape(self.saved_depth_frame.height, self.saved_depth_frame.width)
+            depth = depth_image[object_2_center[1], object_2_center[0]]
+
+        else: 
+            pose_gdrnpp_place = get_object_pose(place_object.name)
+                    
 
         pose_in_head = PoseStamped() #parsing to pose stamped
         pose_in_head.header.frame_id = "xtion_depth_optical_frame"
@@ -637,7 +624,8 @@ class UnderstandingNode:
         message = f"Placed!" if result else f"Failed to place"
         print(message)
 
-        return        
+        return 
+           
     def run(self):
         # Run the ROS node
         rospy.spin()

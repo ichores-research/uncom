@@ -4,6 +4,10 @@ import numpy as np
 from motion_msgs.srv import Prepare, Pick, PickRequest, PrepareRequest
 from motion_msgs.srv import Pick as Place
 from motion_msgs.srv import PickRequest as PlaceRequest
+from motion_msgs.srv import Pick as ToPose  # added for code understandability, so ToPose requests are not misunderstood as Pick
+from motion_msgs.srv import PickRequest as ToPoseRequest # added for code understandability
+
+
 from std_srvs.srv import SetBool, SetBoolRequest
 from geometry_msgs.msg import Pose, PoseArray, Point32, PoseStamped #, Twist 
 import rospy
@@ -21,17 +25,6 @@ from uncom.ycb_objects import get_ycb_objects_info
 from uncom.object_detection import *
 import threading
 
-# import time
-
-# pub = rospy.Publisher('robot_wiggler', Twist, queue_size=10)
-# vel_cmd = Twist()
-# vel_cmd.linear.x = 0.05
-# vel_cmd.angular.z = 0.01
-# t0 = time.time()
-
-# while time.time()-t0<0.2:
-#     pub.publish (vel_cmd)
-# pub.publish(Twist())
 
 stop_publishing_tf = threading.Event()
 
@@ -151,6 +144,7 @@ def reset_planning_scene():
         print(f"Planning scene reset call failed due to: {e}")
         return False
 
+
 def pick_object(index: int, mesh_path: str, grasps: np.ndarray, pose: Pose, **kwargs):
     
     pick_service = rospy.ServiceProxy('/motion/pick', Pick)
@@ -201,6 +195,7 @@ def pick_object(index: int, mesh_path: str, grasps: np.ndarray, pose: Pose, **kw
         print(f"An error occurred: {e}")
         return False
 
+
 def place_object(pose: Pose, mesh_path: str, **kwargs):
 
     place_service = rospy.ServiceProxy('/motion/place', Place)
@@ -223,271 +218,18 @@ def place_object(pose: Pose, mesh_path: str, **kwargs):
     except Exception as e:
         print(f"An error occurred: {e}")
         return False
-
-def pick_object_with_grasp(mesh_path: str, grasps: np.ndarray, pose: Pose, **kwargs):
     
-    pick_service = rospy.ServiceProxy('/motion/pick', Pick)
-    rospy.wait_for_service('/motion/pick')
 
+def move_to_pose(pose:Pose):
+    to_pose_service = rospy.ServiceProxy('/motion/to_pose', ToPose)
+    rospy.wait_for_service('/motion/to_pose')
+
+    to_pose_req = ToPoseRequest()
     try:
-        try:
-            mesh = o3d.io.read_triangle_mesh(mesh_path)
-            mesh_msg = o3d_to_shape_mesh(mesh)
-        except Exception as e:
-            print(f"Failed to read mesh from {mesh_path}: {e}")
-            return False
-
-        grasps_transformed = transform_grasp_obj2world(grasps, pose)
-        pose_array = ndarray_to_pose_array(grasps_transformed)
-
-        # Create Pick message
-        pick_req = PickRequest()
-        pick_req.object_mesh = mesh_msg
-        pick_req.object_pose = pose
-        pick_req.grasps = pose_array
-        
-
-        # Call the pick service
-        response = pick_service(pick_req)
-        print(f"Pick service response: {response.success}, {response.message}")
-
-        return response.success
+            to_pose_req.object_pose = pose
+            response = to_pose_service(to_pose_req)
+            print(f"To Pose service response: {response.success}, {response.message}")
+            return response.success
     except Exception as e:
         print(f"An error occurred: {e}")
         return False
-
-
-def pick_object_by_info(object_info: dict, object_name: str = None):
-    if object_info is None:
-        rospy.logwarn("pick_object_by_info: object_info is None")
-        return False
-    
-    if object_name is None:
-        rospy.logwarn("pick_object_by_info: object_name is None")
-        return False
-    
-    if "mesh_path" not in object_info or "grasps" not in object_info:
-        rospy.logwarn(f"pick_object_by_info: object_info missing required keys. Got: {list(object_info.keys())}")
-        return False
-    
-    # Get object pose from detection
-    pose_gdrnpp = get_object_pose(object_name)
-    if pose_gdrnpp is None:
-        rospy.logwarn(f"pick_object_by_info: Could not estimate pose for {object_name}")
-        return False
-    
-    # Transform pose to base_footprint frame
-    listener = tf.TransformListener()
-    try:
-        listener.waitForTransform("xtion_depth_optical_frame", "base_footprint", rospy.Time(), rospy.Duration(4.0))
-        
-        pose_in_head = PoseStamped()
-        pose_in_head.header.frame_id = "xtion_depth_optical_frame"
-        pose_in_head.header.stamp = rospy.Time(0)
-        pose_in_head.pose.position = pose_gdrnpp.pose.position
-        pose_in_head.pose.orientation = pose_gdrnpp.pose.orientation
-        
-        pose_in_base = listener.transformPose("base_footprint", pose_in_head)
-        
-    except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as e:
-        rospy.logwarn(f"pick_object_by_info: Transform failed: {e}")
-        return False
-    
-    # Objects are slightly incorporated in the table plane, so move them slightly higher
-    pose_in_base.pose.position.z += 0.06
-    
-    # Start TF publisher threads for visualization (optional, but helps with debugging)
-    if stop_publishing_tf.is_set():
-        stop_publishing_tf.clear()
-    
-    arguments = (pose_in_base.pose, object_name, "base_footprint")
-    tf_publisher_thread = threading.Thread(target=object_pose_tf_publisher, args=arguments)
-    tf_publisher_thread.start()
-    
-    # Try multiple grasps automatically (up to 5 or all available)
-    grasps = object_info["grasps"]
-    max_attempts = min(len(grasps), 5)
-    
-    rospy.loginfo(f"pick_object_by_info: Attempting to pick {object_name} with {max_attempts} grasp attempts")
-    
-    for grasp_idx in range(max_attempts):
-        rospy.loginfo(f"pick_object_by_info: Attempting to pick {object_name} with {max_attempts} grasp attempts")
-        success = pick_object_with_grasp(
-            mesh_path=object_info["mesh_path"],
-            grasps=grasps,
-            pose=pose_in_base.pose
-        )
-        if success:
-            rospy.loginfo(f"pick_object_by_info: Successfully picked {object_name} with grasp {grasp_idx}")
-            # Stop TF publisher threads
-            stop_publishing_tf.set()
-            if tf_publisher_thread.is_alive():
-                tf_publisher_thread.join(timeout=2.0)
-            return True
-    
-    # All grasps failed
-    rospy.logwarn(f"pick_object_by_info: Failed to pick {object_name} after {max_attempts} attempts")
-    # Stop TF publisher threads
-    stop_publishing_tf.set()
-    if tf_publisher_thread.is_alive():
-        tf_publisher_thread.join(timeout=2.0)
-    return False
-
-
-# def pick_object(object_info: dict, object_name: str = None):
-#     return pick_object_by_info(object_info, object_name=object_name)
-
-
-def test_pick(objects_info):
-    """
-    Test the pick and place functionality.
-    Picks an apple from the table in front of the robot.
-    1. Prepares the robot
-    2. Detects objects on the table
-    3. Picks the apple
-    4. Reports success or failure
-    5. Retries up to 10 times if picking fails
-    6. Prints the result
-    """
-    print("Hello, starting pick up test")
-    if stop_publishing_tf.is_set():
-        stop_publishing_tf.clear()
-    
-    # First prepare the robot
-    # move_2_prepare_pose = bool(input("Insert 1 if you want to move the arm to the prepare pose, 0 otherwise. "))
-    # if move_2_prepare_pose:
-    preparation_success = prepare_robot()
-    
-    # print(f"Preparation submit success {preparation_success}") # TODO: This currently prints "None" and claims the preparation was unsuccesful
-    # if not preparation_success:
-    #     print("Robot preparation failed.")
-    #     return
-
-    # input("Press enter to continue with transform:")
-    
-    listener = tf.TransformListener()
-    print(f"{listener}")
-    wait_success = listener.waitForTransform("xtion_depth_optical_frame", "base_footprint", rospy.Time(), rospy.Duration(4.0))
-    print(f"wait success = {wait_success}")
-    print("waiting done.")
-
-    # input("Press enter to detect objections:")
-
-    detections = detect_objects()
-    if len(detections) == 0:
-        print("No objects detected.")
-        return
-
-    print(f"Detected {detections}")
-
-    detection = detections[0]
-    rospy.loginfo(f"Working with detection = {detection.name}")
-    if "banana" in detection.name:
-        rospy.set_param("/motion/closed_gripper_joint", 0.015)
-    elif "mustard" in detection.name:
-        rospy.set_param("/motion/closed_gripper_joint", 0.025)
-    elif "apple" in detection.name:
-        rospy.set_param("/motion/closed_gripper_joint", 0.03)
-    elif "mug" in detection.name:
-        rospy.set_param("/motion/closed_gripper_joint", 0.005)
-    else:
-        rospy.set_param("/motion/closed_gripper_joint", 0.025)
-        
-    pose_gdrnpp = get_object_pose(detection.name)
-
-    print(pose_gdrnpp)
-    
-    if pose_gdrnpp is  None:
-        print("Could not estimate object pose.")
-        return
-
-    pose_in_head = PoseStamped() #parsing to pose stamped
-    pose_in_head.header.frame_id = "xtion_depth_optical_frame"
-    pose_in_head.header.stamp = rospy.Time(0)  # latest available
-
-    pose_in_head.pose.position = pose_gdrnpp.pose.position
-    pose_in_head.pose.orientation = pose_gdrnpp.pose.orientation
-
-    #print("Detected ", detections[0].name)
-    #print(f"At position :{round( pose_in_head.pose.position.x,2)}, {round(pose_in_head.pose.position.y,2)}, {round(pose_in_head.pose.position.z,2)}")
-        
-    try:
-        pose_in_base = listener.transformPose("base_footprint", pose_in_head)
-        print("Transformed pose:")
-        print("Position:", pose_in_base.pose.position)
-        print("Orientation:", pose_in_base.pose.orientation)
-        
-    except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-        print("Transform of the pose to base footprint failed.")
-        return
-        
-    print("Attempting to pick...")
-
-    arguments = (pose_in_base.pose, detections[0].name, "base_footprint")
-    tf_publisher_thread = threading.Thread(target = object_pose_tf_publisher, args = arguments)
-    tf_publisher_thread.start()
-
-    arguments2 = (pose_in_base.pose, f"pose_{detections[0].name}", "base_footprint")
-    tf_publisher_thread2 = threading.Thread(target = object_pose_tf_publisher, args = arguments2)
-    tf_publisher_thread2.start()
-
-    object_info = objects_info.get(detections[0].name, None)
-    if object_info is None:
-        print(f"Object {detection.name} not found in dataset.")
-        return
-    
-    # objects are slightly incorporated in the table plane,
-    # so this is moving them slightly higher
-    pose_in_base.pose.position.z += 0.06
-
-    pick_success = False
-    count = 10
-    print (f"\n\n\n\nShape of the grasp array is: {object_info['grasps'].shape}\n\n\n\n")
-    
-    filtered_grasps = object_info["grasps"] #np.array([grasp for grasp in object_info["grasps"] if grasp[0][11]<0])
-    pick_counter = 0 
-    while not pick_success or pick_counter < filtered_grasps.shape[0]:
-        pose_in_base.header.stamp = rospy.Time(0) 
-        print("\tAttempts left ", count)
-        print(f"Attempting grasp index {pick_counter}")
-        index = int(input("Enter the grasp you want to try: "))
-        
-        pick_success = pick_object(
-            index, 
-            mesh_path=object_info["mesh_path"],
-            grasps = object_info["grasps"],
-            pose= pose_in_base.pose  
-            )
-        reset_planning_scene()
-        count -= 1
-        pick_counter += 1
-        if count == 0:
-            break
-            
-        input(f"Press enter to try again: ")
-
-    message = f"Picked!" if pick_success else f"Failed to pick"
-    print(message)
-    
-    place_pose = pose_in_base.pose
-    place_pose.pose.position.x-=.3
-    result = place_object(pose = place_pose.pose, mesh_path = object_info["mesh_path"])
-    
-    message = f"Placed!" if result else f"Failed to place"
-    print(message)
-
-    return
-    
-    
-if __name__=="__main__":
-    rospy.init_node('pick_and_place_test_node')
-
-    DATASET = os.environ.get("DATASET", "ycb_ichores")
-    OBJECTS_INFO = get_ycb_objects_info(DATASET)
-    try:
-        test_pick(OBJECTS_INFO)
-
-    except rospy.ROSInterruptException:
-        pass
-    except KeyboardInterrupt:
-        pass

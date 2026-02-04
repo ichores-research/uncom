@@ -83,25 +83,3 @@ def parse_scene_for_placing(objects_info, object_in_the_gripper=None):
     if object_in_the_gripper is not None:
         scene['object in the gripper'] = {'name': object_in_the_gripper, 'diameter': objects_info[object_in_the_gripper]['diameter']}
     return scene
-    
-
-if __name__ == "__main__":
-    rospy.init_node('object_detection_node')
-    rate = rospy.Rate(200)
-    try:
-        while not rospy.is_shutdown():
-            detections = detect_objects()
-            for detection in detections:
-                pose = get_object_pose(detection.name)
-                if pose is None:
-                    continue
-                try:
-                    print(pose.name)
-                    print(f"{round( pose.pose.position.x,2)}, {round(pose.pose.position.y,2)}, {round(pose.pose.position.z,2)}")
-                except:
-                    continue
-            rate.sleep()
-    except rospy.ROSInterruptException:
-        pass
-    except KeyboardInterrupt:
-        pass
