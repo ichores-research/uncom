@@ -5,17 +5,24 @@ services:
       context: .
       dockerfile: Dockerfile
     network_mode: "host"
-    runtime: "nvidia"
+    # 👇 Modern way to request GPUs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: ["gpu"]
+    # Or simpler on Compose schema supporting it:
+    # gpus: all
+
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - /etc/localtime:/etc/localtime:ro
       - ./models:/root/models:ro
       - ./main.py:/root/main.py:rw
       - ./uncom_utils:/root/uncom_utils:rw
-
-    environment: 
+    environment:
       - DISPLAY
       - QT_X11_NO_MITSHM=1
-    command: ["/usr/local/bin/python3.9", "/root/main.py"]
+    command: ["/usr/bin/python3", "/root/main.py"]
     stdin_open: true
     tty: true
