@@ -1,0 +1,3 @@
+include:
+  - uncom_reasoner/docker-compose.yml
+  - uncom_ws/docker-compose.yml

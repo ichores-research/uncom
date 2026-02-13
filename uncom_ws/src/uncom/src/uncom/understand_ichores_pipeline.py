@@ -136,7 +136,7 @@ class UnderstandingNode:
         self.publishable_tfs = [self.object_tf, self.object_pointing_tf, self.target_tf, self.target_pointing_tf]
         self.stored_command = []
         
-        self.objects_info = get_ycb_objects_info("ycbv_ichores")
+        self.objects_info = get_ycb_objects_info("ycb_ichores")
 
         timer = rospy.Timer(rospy.Duration(0.1), self.tf_callback)
         timer 
@@ -640,5 +640,5 @@ if __name__ == '__main__':
     # if node.robot_model != 'krakow':
     #     rospy.sleep(10.0)
     # node.publish_vad_status(True)
-    node.execute_pick_place()
+    node.run()
 
