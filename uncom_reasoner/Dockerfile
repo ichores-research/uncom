@@ -120,7 +120,7 @@ RUN git clone https://github.com/facebookresearch/dinov2.git && \
 
 # === Install transformers and audio processing WITH NumPy constraint ===
 RUN pip install --no-cache-dir \
-    'transformers==4.40.2' \
+    'transformers==4.46.3' \
     'accelerate>=0.26' \
     soundfile \
     librosa \

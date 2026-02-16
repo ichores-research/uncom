@@ -122,15 +122,15 @@ class CommandExtractor:
     """
     def __init__(self, device="cuda", torch_dtype="auto") -> None:
         # Phi-mini model
-        model = AutoModelForCausalLM.from_pretrained( #"microsoft/Phi-3-mini-4k-instruct",
-            "microsoft/Phi-4-mini-instruct",
+        model = AutoModelForCausalLM.from_pretrained( "microsoft/Phi-3-mini-4k-instruct",
+            # "microsoft/Phi-4-mini-instruct",
             trust_remote_code=True,
             device_map=device,
             torch_dtype=torch_dtype,
         )
 
-        #tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
-        tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-4-mini-instruct")
+        tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-3-mini-4k-instruct")
+        # tokenizer = AutoTokenizer.from_pretrained("microsoft/Phi-4-mini-instruct")
     
         self.pipe = pipeline(
             "text-generation",

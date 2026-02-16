@@ -48,13 +48,22 @@ def get_ycb_objects_info(dataset):
         diameters = { int(model_id) : round( models_info[model_id]["diameter"] / 1000 , 2) for model_id in models_info}
 
     grasp_annotations = load_grasp_annotations(f"/root/catkin_ws/src/uncom/data/datasets/ycb_ichores/grasp_annotations", f"/root/catkin_ws/src/uncom/config/ycb_ichores.yaml")
+    objects_info = {}
+    for name, id in name_to_id.items():
+        try:
+            objects_info[name] = {"id" : id, 
+                                  "diameter": diameters[id], 
+                                  "grasps": grasp_annotations.get(name, None)['grasps'],
+                                  "mesh_path": f"/root/catkin_ws/src/uncom/data/datasets/ycb_ichores/models/obj_{int(id):06d}.ply"
+                                 }
+        except TypeError:
+            objects_info[name] = {"id" : id, 
+                                  "diameter": diameters[id], 
+                                  "grasps": [],
+                                  "mesh_path": f"/root/catkin_ws/src/uncom/data/datasets/ycb_ichores/models/obj_{int(id):06d}.ply"
+                                 }
+        except Exception as e:
+            print(f"Failed to retrieve object information due to {e}.")
+            break
 
-    objects_info = { 
-        name  : {
-            "id" : id, 
-            "diameter": diameters[id], 
-            "grasps": grasp_annotations.get(name, None)['grasps'],
-            "mesh_path": f"/root/catkin_ws/src/uncom/data/datasets/ycb_ichores/models/obj_{int(id):06d}.ply"
-        } for name, id in name_to_id.items()
-    }
     return objects_info
