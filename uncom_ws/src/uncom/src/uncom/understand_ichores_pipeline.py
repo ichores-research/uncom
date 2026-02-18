@@ -13,9 +13,10 @@ from time import time, sleep
 import tf 
 from geometry_msgs.msg import PoseStamped, Pose, TransformStamped
 from sensor_msgs.msg import CameraInfo, Image
+from cv_bridge import CvBridge
 from ast import literal_eval
 import tf2_ros
-from cv_bridge import CvBridge, CvBridgeError
+import tf2_geometry_msgs
 from uncom.ycb_objects import get_ycb_objects_info
 
 from uncom.object_detection import (detect_objects, 
@@ -33,11 +34,15 @@ understood = []
 
 def on_message(client, userdata, message):
     global understood
+    print(f"Received message {message}")
+
     try:
         understood = literal_eval(literal_eval(message.payload.decode("utf-8")))
     except Exception as e: 
         rospy.logerr(f"Failed to understand due to: {e}")
         understood = []
+    
+    print(f"I understood {understood}")
 
 
 def loop_client(client):
@@ -68,6 +73,8 @@ class UnderstandingNode:
         self.clear_video_pub = rospy.Publisher('/clear_video', Empty, queue_size=10)
         self.clear_audio_pub = rospy.Publisher('/clear_audio', Empty, queue_size=10)
 
+        self.set_listening_status = rospy.Publisher('/listening_mode', Bool, queue_size=10)
+        self.set_wrist_publishing_status = rospy.Publisher('/wrist_streaming_mode', Bool, queue_size=10)
 
         self.speech_detected = False
         self.speech_detected_sub = rospy.Subscriber('/speech_detected', Bool, self.speech_detected_callback)
@@ -174,7 +181,7 @@ class UnderstandingNode:
                         self.mqtt_understand_request()
                         rospy.loginfo("REQUEST SENT!")
                         t0 = time()
-                        timeout = 100
+                        timeout = 1000
                         self.publish_vad_status(False)
                         
                         while not understood: 
@@ -271,8 +278,9 @@ class UnderstandingNode:
         try:
             # Get the transform from the new parent to the child frame
             (trans, rot) = self.tf_listener.lookupTransform(new_parent, input_tf.child_frame_id, rospy.Time(0))
-        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-            rospy.logerr("Failed to lookup transform from new parent to child.")
+        
+        except Exception as e : #(tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
+            rospy.logerr("Failed to lookup transform from new parent to child due to {e}")
             return None
 
         # Create a new TransformStamped with the new parent as the frame_id
@@ -289,12 +297,12 @@ class UnderstandingNode:
         new_tf.transform.rotation.w = rot[3]
         
         return new_tf
-
+            
     def set_object_tf(self, center, input_tf):
         x, y = center
         # Get the depth value at the pixel
         
-        depth_image = np.frombuffer(self.saved_depth_frame.data, dtype=np.float32).reshape(self.saved_depth_frame.height, self.saved_depth_frame.width)
+        depth_image = np.frombuffer(self.saved_depth_frame.data, dtype=np.float32).reshape(self.saved_depth_frame.shape[0], self.saved_depth_frame.shape[1])
 
         depth = depth_image[y, x]
         
@@ -326,7 +334,7 @@ class UnderstandingNode:
 
     def set_pointing_tf(self, input_tf, pointing_tf):
         try:
-            object_to_base_tf, object_to_base_rot = self.tf_listener.lookupTransform(self.arm_plan_tf, input_tf.child_frame_id, rospy.Time(0)) 
+            object_to_base_tf, object_to_base_rot = self.tf_listener.lookupTransform(self.arm_plan_tf, "base_footprint", rospy.Time(0)) 
             shoulder_to_base_tf, shoulder_to_base_rot = self.tf_listener.lookupTransform(self.arm_plan_tf, self.shoulder_tf, rospy.Time(0))
 
             # Calculate the point 3/4 of the way between the shoulder and the input transform
@@ -369,6 +377,7 @@ class UnderstandingNode:
         msg = Bool()
         msg.data = status
         self.vad_status_pub.publish(msg)
+        self.set_listening_status.publish(msg)
         rospy.loginfo(f"Published VAD status: {status}")
 
     def publish_save_video(self, file_path):
@@ -450,22 +459,23 @@ class UnderstandingNode:
         rospy.sleep(0.5)
         self.set_object_tf(object_2_center, self.target_tf)    
         rospy.sleep(0.5)
-        self.object_tf = self.change_parent(self.object_tf, "map")
-        self.target_tf = self.change_parent(self.target_tf, "map")
+        print("Debug 1")
+        self.object_tf = self.change_parent(self.object_tf, "base_footprint")
+        print("Debug 2")
+
+        self.target_tf = self.change_parent(self.target_tf, "base_footprint")
         
         self.set_pointing_tf(self.object_tf, self.object_pointing_tf)
         rospy.sleep(0.75)
-
         self.set_pointing_tf(self.target_tf, self.target_pointing_tf)
         rospy.sleep(0.5)
+        print("Debug 3")
 
         if not self.simulation:
             self.tiago_talk(f"Would you like me to {action}")
         
         rospy.sleep(2.0)
         
-        self.set_obst_detect_mode.publish(Bool(data=True))
-
         self.move_arm(self.tf_to_pose(self.object_pointing_tf))
         if self.robot_model!="krakow":
             rospy.sleep(5.0)

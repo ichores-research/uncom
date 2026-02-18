@@ -349,10 +349,11 @@ class ObjectDetector:
     """
     A class to detect objects in an image based on a description.
     """
-
+    
     def __init__(
         self, device="cuda", torch_dtype="auto", detection_threshold=0.3
     ) -> None:
+        print("object dection stage 1")
         # Grounding DINO model for zero-shot object detection
         model_id = "IDEA-Research/grounding-dino-tiny"
         self.pipeline = pipeline(
@@ -361,7 +362,9 @@ class ObjectDetector:
             device=device,
             torch_dtype=torch_dtype,
         )
+        print("object dection stage 2")
         self.detection_threshold = detection_threshold
+        print("object dection stage 3")
 
     def detect(
         self, image: Union[str, Image.Image], description: str
