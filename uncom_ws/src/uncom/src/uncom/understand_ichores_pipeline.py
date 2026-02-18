@@ -109,8 +109,9 @@ class UnderstandingNode:
         self.depth_camera_tf = 'xtion_rgb_optical_frame' 
         self.shoulder_tf = 'arm_1_link' if self.robot_model=='krakow' else 'arm_right_1_link'
 
-       ## listen to TIAGo's tf tree
-        self.tf_listener = tf.TransformListener()
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer)
+
         self.cv_bridge = CvBridge()
 
         self.tf_listener.waitForTransform(self.arm_plan_tf, self.depth_camera_tf, rospy.Time(), rospy.Duration(5.0))
@@ -274,30 +275,37 @@ class UnderstandingNode:
             rospy.logerr("Error reading the depth frame: %s", str(e))
             self.depth_frame = None
             
+    # def change_parent(self, input_tf, new_parent):
+    #         try:
+    #             t = self.tf_buffer.lookup_transform(new_parent, 
+    #                                                 input_tf.child_frame_id, 
+    #                                                 rospy.Time(0), 
+    #                                                 rospy.Duration(1.0)) # Added a small wait for stability
+            
+    #         except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
+    #             rospy.logerr(f"Failed to lookup transform from {new_parent} to {input_tf.child_frame_id}: {e}")
+    #             return None
+
+    #         t.header.stamp = rospy.Time.now()            
+    #         return t
+
     def change_parent(self, input_tf, new_parent):
         try:
-            # Get the transform from the new parent to the child frame
-            (trans, rot) = self.tf_listener.lookupTransform(new_parent, input_tf.child_frame_id, rospy.Time(0))
-        
-        except Exception as e : #(tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-            rospy.logerr("Failed to lookup transform from new parent to child due to {e}")
+            target_to_source_tf = self.tf_buffer.lookup_transform(new_parent, 
+                                                                input_tf.header.frame_id, 
+                                                                rospy.Time(0), 
+                                                                rospy.Duration(1.0))
+            
+            output_tf = tf2_geometry_msgs.do_transform_transform(input_tf, target_to_source_tf)
+            output_tf.header.frame_id = new_parent
+            output_tf.header.stamp = rospy.Time.now()
+            
+            return output_tf
+
+        except Exception as e:
+            rospy.logerr(f"Failed to re-parent transform: {e}")
             return None
 
-        # Create a new TransformStamped with the new parent as the frame_id
-        new_tf = TransformStamped()
-        new_tf.header.stamp = rospy.Time.now()
-        new_tf.header.frame_id = new_parent
-        new_tf.child_frame_id = input_tf.child_frame_id
-        new_tf.transform.translation.x = trans[0]
-        new_tf.transform.translation.y = trans[1]
-        new_tf.transform.translation.z = trans[2]
-        new_tf.transform.rotation.x = rot[0]
-        new_tf.transform.rotation.y = rot[1]
-        new_tf.transform.rotation.z = rot[2]
-        new_tf.transform.rotation.w = rot[3]
-        
-        return new_tf
-            
     def set_object_tf(self, center, input_tf):
         x, y = center
         # Get the depth value at the pixel
@@ -334,20 +342,32 @@ class UnderstandingNode:
 
     def set_pointing_tf(self, input_tf, pointing_tf):
         try:
-            object_to_base_tf, object_to_base_rot = self.tf_listener.lookupTransform(self.arm_plan_tf, "base_footprint", rospy.Time(0)) 
-            shoulder_to_base_tf, shoulder_to_base_rot = self.tf_listener.lookupTransform(self.arm_plan_tf, self.shoulder_tf, rospy.Time(0))
+            object_to_base = self.tf_buffer.lookup_transform(
+                self.arm_plan_tf,         
+                input_tf.child_frame_id,  
+                rospy.Time(0), 
+                rospy.Duration(1.0)
+            ) 
+            
+            shoulder = self.tf_buffer.lookup_transform(
+                self.arm_plan_tf, 
+                self.shoulder_tf, 
+                rospy.Time(0), 
+                rospy.Duration(1.0)
+            )
 
-            # Calculate the point 3/4 of the way between the shoulder and the input transform
-            # pointing_tf.transform.translation.x = shoulder_to_base_tf[0] + .75 * (object_to_base_tf[0]+input_tf.transform.translation.z   - shoulder_to_base_tf[0])
-            # pointing_tf.transform.translation.y = shoulder_to_base_tf[1] + .75 * (object_to_base_tf[1]-input_tf.transform.translation.x  - shoulder_to_base_tf[1])
-            # pointing_tf.transform.translation.z = shoulder_to_base_tf[2] + .75 * (object_to_base_tf[2]-input_tf.transform.translation.y  - shoulder_to_base_tf[2])
+            s = shoulder.transform.translation
+            o = object_to_base.transform.translation
 
-            pointing_tf.transform.translation.x = shoulder_to_base_tf[0] + .5 * (object_to_base_tf[0]  - shoulder_to_base_tf[0])
-            pointing_tf.transform.translation.y = shoulder_to_base_tf[1] + .95 * (object_to_base_tf[1]  - shoulder_to_base_tf[1])
-            pointing_tf.transform.translation.z = shoulder_to_base_tf[2] + .5 * (object_to_base_tf[2]  - shoulder_to_base_tf[2])
+            pointing_tf.transform.translation.x = s.x + 0.5 * (o.x - s.x)
+            pointing_tf.transform.translation.y = s.y + 0.95 * (o.y - s.y)
+            pointing_tf.transform.translation.z = s.z + 0.5 * (o.z - s.z)
 
-        except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException) as e:
-            rospy.logerr(f"Error in lookupTransform: {e}")
+            pointing_tf.header.frame_id = self.arm_plan_tf
+            pointing_tf.header.stamp = rospy.Time.now()
+
+        except Exception as e:
+            rospy.logerr(f"Pointing alignment failed: {e}")
 
     def publish_video_recording(self, status):
         """
@@ -516,7 +536,13 @@ class UnderstandingNode:
             rospy.logerr("Robot failed to assume initial position, giving up.")
             return 
 
-        wait_success = self.tf_listener.waitForTransform("xtion_depth_optical_frame", "base_footprint", rospy.Time(), rospy.Duration(4.0))
+        wait_success = True
+        try:
+            self.tf_buffer.lookup_transform("base_footprint", "xtion_depth_optical_frame", 
+                                            rospy.Time(0), rospy.Duration(4.0))
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException, tf2_ros.ExtrapolationException) as e:
+            wait_success = False
+               
         print(f"wait success = {wait_success}")
         print("waiting done.")
 
@@ -528,15 +554,15 @@ class UnderstandingNode:
 
         if to_pick_object is None:
             depth_image = np.frombuffer(self.saved_depth_frame.data, dtype=np.float32).reshape(self.saved_depth_frame.height, self.saved_depth_frame.width)
-            depth = depth_image[object_2_center[1], object_2_center[0]]
+            depth = depth_image[object_1_center[1], object_1_center[0]]
             
             fx = self.camera_info.K[0]
             fy = self.camera_info.K[4]
             cx = self.camera_info.K[2]
             cy = self.camera_info.K[5]
             
-            X = (object_2_center[0] - cx) * depth / fx
-            Y = (object_2_center[1] - cy) * depth / fy
+            X = (object_1_center[0] - cx) * depth / fx
+            Y = (object_1_center[1] - cy) * depth / fy
             Z = depth
 
             pick_pose = Pose()
@@ -547,39 +573,41 @@ class UnderstandingNode:
             rospy.sleep(1.0)
             move_to_pose(pick_pose)
             close_gripper()
-    
-        pick_object_info = self.objects_info.get(to_pick_object.name, None)
-        
-        if pick_object_info is None:
-            print(f"Object {to_pick_object.name} not found in dataset.")
-            return
-
+            
         else:
-            pose_gdrnpp_pick = get_object_pose(to_pick_object.name)
-            if pose_gdrnpp_pick is  None:
-                print("Could not estimate object pose.")
+            pick_object_info = self.objects_info.get(to_pick_object.name, None)
+        
+            if pick_object_info is None:
+                print(f"Object {to_pick_object.name} not found in dataset.")
                 return
 
-            pose_in_head = PoseStamped() #parsing to pose stamped
-            pose_in_head.header.frame_id = "xtion_depth_optical_frame"
-            pose_in_head.header.stamp = rospy.Time(0)  # latest available
+            else:
+                pose_gdrnpp_pick = get_object_pose(to_pick_object.name)
+                if pose_gdrnpp_pick is  None:
+                    print("Could not estimate object pose.")
+                    return
 
-            pose_in_head.pose.position = pose_gdrnpp_pick.pose.position
-            pose_in_head.pose.orientation = pose_gdrnpp_pick.pose.orientation
+                pose_in_head = PoseStamped() #parsing to pose stamped
+                pose_in_head.header.frame_id = "xtion_depth_optical_frame"
+                pose_in_head.header.stamp = rospy.Time(0)  # latest available
 
-            try:
-                pose_in_base = self.tf_listener.transformPose("base_footprint", pose_in_head)
+                pose_in_head.pose.position = pose_gdrnpp_pick.pose.position
+                pose_in_head.pose.orientation = pose_gdrnpp_pick.pose.orientation
 
-            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-                print("Transform of the pose to base footprint failed.")
-                return
+                try:
+                    transform = self.tf_buffer.lookup_transform("base_footprint", "xtion_depth_optical_frame", rospy.Time(0))
+                    pose_in_base = tf2_geometry_msgs.do_transform_pose(pose_in_head, transform)
+                    # pose_in_base = self.tf_listener.transformPose("base_footprint", pose_in_head)
 
-            if pose_in_base:
+                except Exception as e:
+                    print(f"Transform of the pose to base footprint failed due to: {e}")
+                    return
+
                 for i in range (10):
                     success = pick_object(index=i, 
-                                          mesh_path = pick_object_info["mesh_path"],
-                                          grasps = pick_object_info["grasps"],
-                                          pose = pose_in_base)
+                                        mesh_path = pick_object_info["mesh_path"],
+                                        grasps = pick_object_info["grasps"],
+                                        pose = pose_in_base)
                     if success:
                         break 
 
@@ -602,18 +630,11 @@ class UnderstandingNode:
             place_pose.position.x = X
             place_pose.position.y = Y
             place_pose.position.z = Z 
-            place_object(place_destination, mesh_path=f"/root/catkin_ws/src/uncom/data/datasets/ycb_ichores/models/obj_{int(11):06d}.ply")
+            place_object(place_pose, mesh_path=f"/root/catkin_ws/src/uncom/data/datasets/ycb_ichores/models/obj_{int(11):06d}.ply")
 
         else: 
-            pose_gdrnpp_place = get_object_pose(place_object.name)
+            pose_gdrnpp_place = get_object_pose(place_destination.name)
             place_object_info = self.objects_info.get(place_destination.name, None)
-            pose_in_head = PoseStamped() #parsing to pose stamped
-            pose_in_head.header.frame_id = "xtion_depth_optical_frame"
-            pose_in_head.header.stamp = rospy.Time(0)  # latest available
-
-            pose_in_head.pose.position = pose_gdrnpp_place.pose.position
-            pose_in_head.pose.orientation = pose_gdrnpp_place.pose.orientation
-
             pose_in_head = PoseStamped() #parsing to pose stamped
             pose_in_head.header.frame_id = "xtion_depth_optical_frame"
             pose_in_head.header.stamp = rospy.Time(0)  # latest available
@@ -622,10 +643,12 @@ class UnderstandingNode:
             pose_in_head.pose.orientation = pose_gdrnpp_place.pose.orientation
         
             try:
-                pose_in_base = self.tf_listener.transformPose("base_footprint", pose_in_head)
+                transform = self.tf_buffer.lookup_transform("base_footprint", "xtion_depth_optical_frame", rospy.Time(0))
+                pose_in_base = tf2_geometry_msgs.do_transform_pose(pose_in_head, transform)
+                # pose_in_base = self.tf_listener.transformPose("base_footprint", pose_in_head)
                 
-            except (tf.LookupException, tf.ConnectivityException, tf.ExtrapolationException):
-                print("Transform of the pose to base footprint failed.")
+            except Exception as e:
+                print(f"Transform of the pose to base footprint failed due to: {e}.")
                 return
 
             if pose_in_base:
