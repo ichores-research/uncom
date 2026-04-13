@@ -184,12 +184,6 @@ def pick_object(index: int, mesh_path: str, grasps: np.ndarray, pose: Pose, **kw
         response = pick_service(pick_req)
         print(f"Pick service response: {response.success}, {response.message}")
 
-        place_service = rospy.ServiceProxy('/motion/place', Pick)
-        rospy.wait_for_service('/motion/place')    
-
-        response = place_service(pick_req)
-        print(f"Pick service response: {response.success}, {response.message}")
-
         return response.success
     except Exception as e:
         print(f"An error occurred: {e}")
@@ -237,7 +231,7 @@ def move_to_pose(pose:Pose):
 
 def open_gripper():
     open_gripper_service = rospy.ServiceProxy('/motion/open_gripper', Empty)
-    rospy.wait_for_service('/motion/open_grippper')    
+    rospy.wait_for_service('/motion/open_gripper')
     gripper_req = EmptyRequest()
     open_gripper_service(gripper_req)
     return True
@@ -245,7 +239,7 @@ def open_gripper():
 
 def close_gripper():
     close_gripper_service = rospy.ServiceProxy('/motion/close_gripper', Empty)
-    rospy.wait_for_service('/motion/close_grippper')    
+    rospy.wait_for_service('/motion/close_gripper')
     gripper_req = EmptyRequest()
     close_gripper_service(gripper_req)
     return True

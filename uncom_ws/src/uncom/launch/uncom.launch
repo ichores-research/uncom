@@ -1,8 +1,15 @@
 <?xml version="1.0"?>
 <launch>
+  <arg name="simulation" default="false"/>
+
   <!-- Launch media_node -->
   <include file="$(find uncom)/launch/media_node.launch" />
-  
+
   <!-- Launch understand_node -->
-  <include file="$(find uncom)/launch/understand_node.launch" />
+  <include file="$(find uncom)/launch/understand_node.launch">
+    <arg name="simulation" value="$(arg simulation)"/>
+  </include>
+
+  <!-- Launch simulated TTS server when running in simulation -->
+  <include file="$(find uncom)/launch/sim_tts.launch" if="$(arg simulation)"/>
 </launch>

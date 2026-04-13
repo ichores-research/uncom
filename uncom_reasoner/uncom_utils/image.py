@@ -188,7 +188,7 @@ class PointingDetector:
         base_options = BaseOptions(model_asset_path="models/hand_landmarker.task")
         options = HandLandmarkerOptions(
             base_options=base_options, num_hands=2, min_hand_detection_confidence=0.3
-        )   
+        )
         self.detector = HandLandmarker.create_from_options(options)
 
     def detect(self, image_path):
@@ -349,7 +349,7 @@ class ObjectDetector:
     """
     A class to detect objects in an image based on a description.
     """
-    
+
     def __init__(
         self, device="cuda", torch_dtype="auto", detection_threshold=0.3
     ) -> None:
@@ -797,10 +797,13 @@ def closest_to_fingertip(fingertip_pose,voronoi_centers):
     return distances.index(min(distances))
 
 
-def minimum_distante_to_vector_line(fingertip_pose, pointing_vector, voronoi_centers):
+def minimum_distance_to_vector_line(fingertip_pose, pointing_vector, voronoi_centers):
     line_from_finger = [np.array(fingertip_pose)+t/100*np.array(pointing_vector)/np.linalg.norm(np.array(pointing_vector)) for t in range(1000)]
     distances = [min([np.linalg.norm(p-np.array(c)) for p in line_from_finger]) for c in voronoi_centers]
     return distances.index(min(distances))
+
+# Backwards-compatible alias for external callers
+minimum_distante_to_vector_line = minimum_distance_to_vector_line
 
 def line_plane_intersection(A, B, grid):
     # Convert points to numpy arrays for easier manipulation

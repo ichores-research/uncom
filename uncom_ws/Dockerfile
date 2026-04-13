@@ -16,7 +16,8 @@ RUN apt-get update && apt-get install -y curl && \
     libgl1-mesa-glx \
     libgomp1 \
     libusb-1.0-0 \
-    git && \
+    git \
+    espeak-ng && \
     rm -rf /var/lib/apt/lists/*
 
 SHELL ["/bin/bash", "-c"]

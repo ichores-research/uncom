@@ -342,17 +342,20 @@ class UnderstandingNode:
     def set_object_tf(self, center, input_tf):
         x, y = center
         # Get the depth value at the pixel
-        
+
         depth_image = np.frombuffer(self.saved_depth_frame.data, dtype=np.float32).reshape(self.saved_depth_frame.height, self.saved_depth_frame.width)
 
         depth = depth_image[y, x]
-        
+        if np.isnan(depth) or depth <= 0:
+            rospy.logwarn(f"Invalid depth at ({x}, {y}): {depth}")
+            return False
+
         # Camera intrinsic parameters
         fx = self.camera_info.K[0]
         fy = self.camera_info.K[4]
         cx = self.camera_info.K[2]
         cy = self.camera_info.K[5]
-        
+
         # Convert pixel coordinates to 3D coordinates
         X = (x - cx) * depth / fx
         Y = (y - cy) * depth / fy
@@ -360,7 +363,8 @@ class UnderstandingNode:
 
         input_tf.transform.translation.x = X
         input_tf.transform.translation.y = Y
-        input_tf.transform.translation.z = Z 
+        input_tf.transform.translation.z = Z
+        return True
 
     def tf_to_pose(self, transform):
         pose = Pose()
@@ -549,27 +553,34 @@ class UnderstandingNode:
         self.saved_depth_frame = self.depth_frame
         self.set_arm_pub.publish(String(data="right"))
         
-        self.set_object_tf(object_1_center, self.object_tf)
+        obj_valid = self.set_object_tf(object_1_center, self.object_tf)
         rospy.sleep(0.5)
-        self.set_object_tf(object_2_center, self.target_tf)    
+        tgt_valid = self.set_object_tf(object_2_center, self.target_tf)
         rospy.sleep(0.5)
-        self.object_tf = self.change_parent(self.object_tf, "map")
-        self.target_tf = self.change_parent(self.target_tf, "map")
-        
-        self.set_pointing_tf(self.object_tf, self.object_pointing_tf)
+
+        if obj_valid:
+            self.object_tf = self.change_parent(self.object_tf, "map")
+            if self.object_tf is not None:
+                self.set_pointing_tf(self.object_tf, self.object_pointing_tf)
         rospy.sleep(0.75)
 
-        self.set_pointing_tf(self.target_tf, self.target_pointing_tf)
+        if tgt_valid:
+            self.target_tf = self.change_parent(self.target_tf, "map")
+            if self.target_tf is not None:
+                self.set_pointing_tf(self.target_tf, self.target_pointing_tf)
         rospy.sleep(0.5)
 
         if not self.simulation:
             self.tiago_talk(f"Would you like me to {action}")
-        
+
         rospy.sleep(2.0)
-        
+
         self.set_obst_detect_mode.publish(Bool(data=True))
 
-        self.move_arm(self.tf_to_pose(self.object_pointing_tf))
+        if not obj_valid:
+            rospy.logwarn("Invalid depth for object, skipping point.")
+        else:
+            self.move_arm(self.tf_to_pose(self.object_pointing_tf))
         if self.robot_model!="krakow":
             rospy.sleep(5.0)
         
@@ -581,7 +592,10 @@ class UnderstandingNode:
         self.set_arm_pub.publish(String(data="left"))
         rospy.sleep(.5)
 
-        self.move_arm(self.tf_to_pose(self.target_pointing_tf))
+        if not tgt_valid:
+            rospy.logwarn("Invalid depth for target, skipping point.")
+        else:
+            self.move_arm(self.tf_to_pose(self.target_pointing_tf))
 
         if self.robot_model!="krakow":
             rospy.sleep(5.0)

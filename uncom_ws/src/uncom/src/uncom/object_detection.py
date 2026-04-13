@@ -42,27 +42,30 @@ def get_object_pose(object_name):
     detections = detect_objects(rgb)
     
     if detections is None or len(detections) == 0:
-        return "Nothing detected"
-    else:
+        rospy.logwarn(f"get_object_pose: Nothing detected for '{object_name}'")
+        return None
 
-        estimated_pose_camFrame = None
+    estimated_pose_camFrame = None
 
-        try:
-            for detection in detections:
-                if detection.name == object_name:
-                    print(f"Checking object {object_name}")
-                    estimated_pose_camFrame = estimate_object_pose(rgb, depth, detection)[0]
-                    
-                    break
-                
-        except Exception as e:
-            return "Pose estimation failed"
-        return estimated_pose_camFrame
+    try:
+        for detection in detections:
+            if detection.name == object_name:
+                print(f"Checking object {object_name}")
+                estimated_pose_camFrame = estimate_object_pose(rgb, depth, detection)[0]
+                break
+
+    except Exception as e:
+        rospy.logwarn(f"get_object_pose: Pose estimation failed for '{object_name}': {e}")
+        return None
+    return estimated_pose_camFrame
 
 
 def get_object_poses():
     detections = detect_objects()
-    return [get_object_pose(det.name) for det in detections]
+    if detections is None:
+        return []
+    poses = [get_object_pose(det.name) for det in detections]
+    return [p for p in poses if p is not None]
 
 
 def parse_scene_for_placing(objects_info, object_in_the_gripper=None):
