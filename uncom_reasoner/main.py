@@ -2,7 +2,7 @@
 
 ###############################################################################
 #               ██    ██ ███    ██  ██████   ██████     ███    ███            #
-#               ██    ██ ████   ██ ██      ██  ██  ██   ████  ████            # 
+#               ██    ██ ████   ██ ██      ██  ██  ██   ████  ████            #
 #               ██    ██ ██ ██  ██ ██    ██   ████   ██ ██ ████ ██            #
 #               ██    ██ ██  ██ ██ ██      ██  ██  ██   ██  ██  ██            #
 #                ██████  ██   ████  ██████   ██████     ██      ██            #
@@ -743,6 +743,9 @@ def _understand_single(command, video_path, output_dir, object_detector,
     object_concrete = command.object.concrete
     target_concrete = command.target.concrete
 
+    has_object = bool(command.object.text and command.object.text.strip())
+    has_target = bool(command.target.text and command.target.text.strip())
+
     # --- Step 4: Detect objects ------------------------------------------
     # NOTE: object_detector is shared/passed in from the orchestrator.
     all_pickable = _detect_pickable_objects(object_detector, object_image)
@@ -759,43 +762,49 @@ def _understand_single(command, video_path, output_dir, object_detector,
         )
 
     target_results = []
+    target_location = None
+    relative_position_kw = False
 
-    # Spatial relation comes directly from the structured schema.
-    # target.location.relation = "next to", "to the left of", "between", etc.
-    # target.location.reference = the full noun phrase to resolve.
-    #
-    # We first try to detect the reference string directly.  If the detector
-    # fails, _resolve_reference decomposes it spatially (with patience) and
-    # uses _find_objects_between / _find_object_by_relative_position + gesture
-    # as fallback at each level.
-    target_location = command.target.location
-    relative_position_kw = (
-        check_relative_position(target_location.relation) if target_location else False
-    )
-
-    if target_location and relative_position_kw:
-        # Try to resolve the reference object — may recurse if complex
-        resolved_ref = _resolve_reference(
-            object_detector, target_image,
-            target_location.reference,
-            all_pickable,
-            hand_detector=None,   # hand_detector not yet initialised; set below
-            frame_path=target_frame_path,
-            patience=3,
+    if has_target:
+        # Spatial relation comes directly from the structured schema.
+        # target.location.relation = "next to", "to the left of", "between", etc.
+        # target.location.reference = the full noun phrase to resolve.
+        #
+        # We first try to detect the reference string directly.  If the detector
+        # fails, _resolve_reference decomposes it spatially (with patience) and
+        # uses _find_objects_between / _find_object_by_relative_position + gesture
+        # as fallback at each level.
+        target_location = command.target.location
+        relative_position_kw = (
+            check_relative_position(target_location.relation) if target_location else False
         )
-        target_results = [resolved_ref] if resolved_ref is not None else []
+
+        if target_location and relative_position_kw:
+            # Try to resolve the reference object — may recurse if complex
+            resolved_ref = _resolve_reference(
+                object_detector, target_image,
+                target_location.reference,
+                all_pickable,
+                hand_detector=None,   # hand_detector not yet initialised; set below
+                frame_path=target_frame_path,
+                patience=3,
+            )
+            target_results = [resolved_ref] if resolved_ref is not None else []
+        else:
+            target_results = object_detector.detect(
+                target_image, command.target.detection_query() or command.target.text,
+            )
+
+        if target_results:
+            logger.info("Detected %d target instances of '%s'",
+                         len(target_results), command.target.text)
+        else:
+            logger.warning("'%s' could not be detected.", command.target.text)
     else:
-        target_results = object_detector.detect(
-            target_image, command.target.detection_query() or command.target.text,
-        )
+        logger.info("No target specified — pick-only mode.")
 
     logger.info("Detected %d object instances of '%s'",
                 len(object_results), command.object.text)
-    if target_results:
-        logger.info("Detected %d target instances of '%s'",
-                     len(target_results), command.target.text)
-    else:
-        logger.warning("'%s' could not be detected.", command.target.text)
 
     # --- Step 5: Detect pointing gestures (lazy — only when needed) ------
     # Gesture is needed when object or target is non-concrete (deictic),
@@ -803,14 +812,15 @@ def _understand_single(command, video_path, output_dir, object_detector,
     hand_detector = PointingDetector()
 
     needs_object_gesture = (not object_concrete) or (len(object_results) > 1)
-    needs_target_gesture = (not target_concrete) or (len(target_results) > 1)
+    needs_target_gesture = (has_target
+                            and ((not target_concrete) or (len(target_results) > 1)))
 
     # Skip gesture only when a concrete noun got zero DINO detections —
     # gesture can't disambiguate what DINO couldn't find. For deictic words
     # (concrete=False) gesture is the primary resolution method, so never skip.
     if len(object_results) == 0 and object_concrete:
         needs_object_gesture = False
-    if len(target_results) == 0 and target_concrete:
+    if has_target and len(target_results) == 0 and target_concrete:
         needs_target_gesture = False
 
     if needs_object_gesture:
@@ -844,19 +854,23 @@ def _understand_single(command, video_path, output_dir, object_detector,
         target_results = [resolved_ref] if resolved_ref is not None else []
 
     # --- Step 6: Check task feasibility ----------------------------------
-    # Allow pick-and-hold (no target) and place-held (no object) as valid.
-    has_object = bool(command.object.text and command.object.text.strip())
-    has_target = bool(command.target.text and command.target.text.strip())
+    # A deictic object/target is unambiguous when only one pickable thing
+    # exists — "this" / "it" can only refer to that single object, no
+    # gesture required.
+    single_pickable = len(all_pickable) == 1
 
     impossible_task = (
-        # Object present but unresolvable
+        # Object present but unresolvable (deictic, no gesture, no other hint)
         (has_object and not object_concrete and not object_pointing_detected
-         and command.object.property_reference is None)
+         and command.object.property_reference is None
+         and not single_pickable)
         # Object present, concrete, but nothing detected
         or (has_object and object_concrete and len(object_results) == 0
             and command.object.property_reference is None)
         # Target present but unresolvable
-        or (has_target and not target_concrete and not target_pointing_detected)
+        or (has_target and not target_concrete and not target_pointing_detected
+            and command.target.property_reference is None
+            and not single_pickable)
         # Target present, concrete, but nothing detected
         or (has_target and target_concrete and len(target_results) == 0)
     )
@@ -930,17 +944,55 @@ def _understand_single(command, video_path, output_dir, object_detector,
 
 
     # --- Step 8: Resolve target ------------------------------------------
-    # Four cases:
+    # Six cases:
     #   1) target is a concrete object
     #   2) target is described relative to another object
     #   3) target is a deictic reference ("this", "here", "there")
     #   4) target is an empty area on the table
+    #   5) no target at all — pick-only
+    #   6) target has property_reference (similar in color/shape/size, or spatial)
 
-    area_target = "here" in command.target.text or "there" in command.target.text
+    area_target = has_target and ("here" in command.target.text or "there" in command.target.text)
     chosen_area = []
-    pointed_target_idx = 0   # safe default; overwritten below if needed
+    pointed_target_idx = None
 
-    if target_concrete:
+    # Pre-resolve target property_reference (e.g. "object similar to THIS one",
+    # "THIS small object") before concrete/non-concrete branching.
+    if has_target and command.target.property_reference is not None:
+        logger.info("Target has property_reference='%s'",
+                    command.target.property_reference)
+        tgt_candidates = _dispatch_property_reference(
+            command.target, object_detector, target_image, all_pickable,
+            hand_detector, target_frame_path, patience=3,
+        )
+        if tgt_candidates:
+            # Apply size descriptor filtering if applicable
+            size_words = command.target.size_descriptors()
+            if size_words and command.target.property_reference not in ("size",):
+                tgt_candidates = _find_object_by_size_absolute(
+                    tgt_candidates, size_words[0])
+
+            # Narrow target_results to the resolved candidate(s)
+            target_results = [obj for _, obj in tgt_candidates]
+            target_concrete = True  # treat as concrete from here on
+            logger.info("Target property_reference resolved to %d candidate(s)",
+                        len(target_results))
+
+    # Fallback: target has size descriptors but no property_reference — apply
+    # absolute size filtering to narrow multiple candidates.
+    elif (has_target and not target_concrete
+          and command.target.size_descriptors()
+          and len(target_results) > 1):
+        size_words = command.target.size_descriptors()
+        tgt_indexed = list(enumerate(target_results))
+        tgt_indexed = _find_object_by_size_absolute(tgt_indexed, size_words[0])
+        target_results = [obj for _, obj in tgt_indexed]
+        logger.info("Target size-filtered to %d candidate(s)", len(target_results))
+
+    if not has_target:
+        logger.info("No target — skipping target resolution (pick-only).")
+
+    elif target_concrete:
         pointed_target_idx = 0
 
         if len(target_results) > 1 and len(target_pointing_vec) > 0:
@@ -1088,7 +1140,11 @@ def _understand_single(command, video_path, output_dir, object_detector,
     torch.cuda.empty_cache()
 
     # --- Step 9: Final validation ----------------------------------------
-    if pointed_object_idx is None or (pointed_target_idx is None and not chosen_area):
+    if pointed_object_idx is None:
+        logger.warning("FAILURE 7: failed to identify pointed object")
+        return ["ambiguous", "failure 7: failed to identify pointed object"]
+
+    if has_target and pointed_target_idx is None and not chosen_area:
         logger.warning("FAILURE 7: failed to identify pointed target/area")
         return ["ambiguous", "failure 7: failed to identify pointed target/area"]
 
@@ -1101,25 +1157,26 @@ def _understand_single(command, video_path, output_dir, object_detector,
         object_image, [resolved_object_result]
     )
 
-    if area_target:
-        x, y = zip(*chosen_area)
-        target_results = [DetectionResult(
-            score=1.0,
-            label="target.",
-            box=BoundingBox(
-                xmin=int(min(x)), ymin=int(min(y)),
-                xmax=int(max(x)), ymax=int(max(y)),
-            ),
-            mask=np.array(chosen_area).astype(np.uint8),
-        )]
-        pointed_target_idx = 0
-    else:
-        [target_results[pointed_target_idx]] = segmenter.segment(
-            target_image, [target_results[pointed_target_idx]]
-        )
+    if has_target:
+        if area_target:
+            x, y = zip(*chosen_area)
+            target_results = [DetectionResult(
+                score=1.0,
+                label="target.",
+                box=BoundingBox(
+                    xmin=int(min(x)), ymin=int(min(y)),
+                    xmax=int(max(x)), ymax=int(max(y)),
+                ),
+                mask=np.array(chosen_area).astype(np.uint8),
+            )]
+            pointed_target_idx = 0
+        else:
+            [target_results[pointed_target_idx]] = segmenter.segment(
+                target_image, [target_results[pointed_target_idx]]
+            )
+        logger.info("Segmented target '%s'", command.target.text)
 
     logger.info("Segmented object '%s'", command.object.text)
-    logger.info("Segmented target '%s'", command.target.text)
 
     del segmenter
     torch.cuda.empty_cache()
@@ -1133,33 +1190,36 @@ def _understand_single(command, video_path, output_dir, object_detector,
     annotated_object_image.save(annotated_object_image_path)
     logger.info("Saved annotated object image to %s", annotated_object_image_path)
 
-    annotated_target_image = annotate_image(
-        target_image, target_results, target_pointing_vec,
-        emph_idx=pointed_target_idx,
-    )
-    annotated_target_image_path = output_dir / "annotated_target.png"
-    annotated_target_image.save(annotated_target_image_path)
-    logger.info("Saved annotated target image to %s", annotated_target_image_path)
+    if has_target:
+        annotated_target_image = annotate_image(
+            target_image, target_results, target_pointing_vec,
+            emph_idx=pointed_target_idx,
+        )
+        annotated_target_image_path = output_dir / "annotated_target.png"
+        annotated_target_image.save(annotated_target_image_path)
+        logger.info("Saved annotated target image to %s", annotated_target_image_path)
 
-    caption = (f"{command.object.text} - {command.action.text}"
-               f" - {command.target.text}")
-    annotated_action = annotate_action(
-        annotated_object_image, annotated_target_image, caption,
-    )
-    name = video_path.stem  # filename without extension, safe for all formats
-    annotated_action_path = output_dir / f"{name}_annotated_action.png"
-    annotated_action.save(annotated_action_path)
-    logger.info("Saved annotated action image to %s", annotated_action_path)
+        caption = (f"{command.object.text} - {command.action.text}"
+                   f" - {command.target.text}")
+        annotated_action = annotate_action(
+            annotated_object_image, annotated_target_image, caption,
+        )
+        name = video_path.stem
+        annotated_action_path = output_dir / f"{name}_annotated_action.png"
+        annotated_action.save(annotated_action_path)
+        logger.info("Saved annotated action image to %s", annotated_action_path)
 
     # --- Step 12: Return result ------------------------------------------
     try:
+        tgt_center = (list(target_results[pointed_target_idx or 0].box.center)
+                      if has_target else None)
         return [
             "OK",
             command.object.text,
             command.action.text,
             command.target.text,
             list(resolved_object_result.box.center),
-            list(target_results[pointed_target_idx or 0].box.center),
+            tgt_center,
         ]
     except Exception as e:
         logger.error("Failed to extract bounding box: %s", e)

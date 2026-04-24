@@ -913,7 +913,7 @@ class UnderstandingNode:
             rospy.logerr("Failed to transform place pose to base_footprint: %s", e)
             return
 
-        place_pose.position.z += 0.10
+        place_pose.position.z += 0.14
         place_object(place_pose,
                      mesh_path="/root/catkin_ws/src/uncom/data/obj_000010.ply")
 
